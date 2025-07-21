@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+requests
+aiohttp
+aiofiles
+python-multipart

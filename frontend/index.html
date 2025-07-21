@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#4CAF50">
+    <title>儿童视频播放器</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icon-192x192.png">
+</head>
+<body>
+    <!-- 加载页面 -->
+    <div id="loading" class="screen">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <h2>🎬 儿童视频播放器</h2>
+            <p>正在加载...</p>
+        </div>
+    </div>
+
+    <!-- 文件夹列表页面 -->
+    <div id="folders-screen" class="screen hidden">
+        <header class="app-header">
+            <h1>📁 选择文件夹</h1>
+        </header>
+        <main class="content">
+            <div id="folders-list" class="folders-grid">
+                <!-- 文件夹将动态加载 -->
+            </div>
+        </main>
+    </div>
+
+    <!-- 视频列表页面 -->
+    <div id="videos-screen" class="screen hidden">
+        <header class="app-header">
+            <button id="back-to-folders" class="back-btn">← 返回</button>
+            <h1 id="folder-title">📺 视频列表</h1>
+        </header>
+        <main class="content">
+            <div id="videos-list" class="videos-grid">
+                <!-- 视频列表将动态加载 -->
+            </div>
+        </main>
+    </div>
+
+    <!-- 视频播放页面 -->
+    <div id="player-screen" class="screen hidden">
+        <header class="app-header">
+            <button id="back-to-videos" class="back-btn">← 返回</button>
+            <h1 id="video-title">🎬 正在播放</h1>
+        </header>
+        <main class="content player-content">
+            <div id="video-container">
+                <video id="video-player" controls playsinline>
+                    <source id="video-source" src="" type="video/mp4">
+                    您的浏览器不支持视频播放。
+                </video>
+            </div>
+            <div id="download-progress" class="progress-container hidden">
+                <div class="progress-info">
+                    <span>📥 正在下载视频...</span>
+                    <span id="progress-text">0%</span>
+                </div>
+                <div class="progress-bar">
+                    <div id="progress-fill" class="progress-fill"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 错误提示 -->
+    <div id="error-toast" class="toast hidden">
+        <span id="error-message"></span>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

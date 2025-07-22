@@ -172,6 +172,22 @@ body {
     justify-content: center;
     font-size: 2rem;
     color: white;
+    position: relative;
+    overflow: hidden;
+}
+
+.video-thumbnail img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.video-thumbnail .placeholder-icon {
+    position: relative;
+    z-index: 1;
 }
 
 .video-info {
@@ -189,6 +205,12 @@ body {
 .video-page {
     font-size: 0.9rem;
     color: #666;
+}
+
+.video-duration {
+    font-size: 0.8rem;
+    color: #999;
+    margin-top: 3px;
 }
 
 /* 视频播放器 */

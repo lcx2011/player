@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import requests
+import json
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,8 +14,10 @@ import asyncio
 BASE_DIR = Path(__file__).resolve().parent.parent
 VIDEOS_DIR = BASE_DIR / "videos"
 FRONTEND_DIR = BASE_DIR / "frontend"
-# Ensure the main videos directory exists
+COVERS_DIR = BASE_DIR / "covers"  # 封面缓存目录
+# Ensure the main directories exist
 VIDEOS_DIR.mkdir(exist_ok=True)
+COVERS_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="Video Player Backend")
 
@@ -63,6 +66,51 @@ def extract_bvid_from_url(url_or_bvid: str) -> str:
         # Assume it's already a BV ID
         return url_or_bvid
 
+def get_video_parts_with_covers(bvid: str):
+    """Fetches video parts and their cover images from Bilibili page."""
+    try:
+        # 获取视频页面
+        url = f"https://www.bilibili.com/video/{bvid}"
+        response = get_bilibili_response(url)
+        if not response:
+            return None
+
+        html_content = response.text
+
+        # 提取JSON数据
+        match = re.search(r'<script>window\.__INITIAL_STATE__=(.*?);\(function\(\)', html_content)
+        if not match:
+            print(f"未找到视频数据: {bvid}")
+            return None
+
+        json_data_string = match.group(1)
+        data = json.loads(json_data_string)
+
+        # 获取视频分P列表
+        video_parts = data.get('videoData', {}).get('pages', [])
+        if not video_parts:
+            print(f"未找到分P视频: {bvid}")
+            return None
+
+        # 为每个分P添加封面信息
+        enhanced_parts = []
+        for part in video_parts:
+            enhanced_part = {
+                'cid': part.get('cid'),
+                'page': part.get('page'),
+                'part': part.get('part'),
+                'duration': part.get('duration'),
+                'cover_url': part.get('first_frame', ''),
+                'dimension': part.get('dimension', {})
+            }
+            enhanced_parts.append(enhanced_part)
+
+        return enhanced_parts
+
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"获取视频信息失败: {e}")
+        return None
+
 def get_video_parts(bvid: str):
     """Fetches the list of video parts (pages) for a given Bilibili BV ID."""
     url = 'https://api.bilibili.com/x/player/pagelist'
@@ -76,6 +124,35 @@ def get_video_parts(bvid: str):
         except (ValueError, KeyError):
             return None
     return None
+
+async def download_and_cache_cover(bvid: str, page: int, cover_url: str) -> str:
+    """下载并缓存封面图片，返回本地路径"""
+    if not cover_url:
+        return ""
+
+    # 确保URL协议完整
+    if cover_url.startswith('//'):
+        cover_url = 'http:' + cover_url
+
+    # 生成缓存文件名
+    cover_filename = f"{bvid}_p{page}.jpg"
+    cover_path = COVERS_DIR / cover_filename
+
+    # 如果已经缓存，直接返回
+    if cover_path.exists():
+        return f"/covers/{cover_filename}"
+
+    try:
+        # 下载封面
+        response = get_bilibili_response(cover_url)
+        if response:
+            with open(cover_path, 'wb') as f:
+                f.write(response.content)
+            return f"/covers/{cover_filename}"
+    except Exception as e:
+        print(f"下载封面失败: {e}")
+
+    return ""
 
 def download_and_merge(bvid: str, p_info: dict, target_dir: Path):
     """Downloads and merges a single video part."""
@@ -166,7 +243,7 @@ async def list_folders():
 async def list_videos_in_folder(folder_name: str):
     """
     Lists all video parts from a 'list.txt' file in a specific folder.
-    It fetches the part information from Bilibili.
+    It fetches the part information and covers from Bilibili.
     """
     folder_path = VIDEOS_DIR / folder_name
     list_file = folder_path / "list.txt"
@@ -186,12 +263,29 @@ async def list_videos_in_folder(folder_name: str):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    video_parts = get_video_parts(bvid)
+    # 优先使用带封面的获取方法
+    video_parts = get_video_parts_with_covers(bvid)
     if not video_parts:
-        raise HTTPException(status_code=500, detail=f"Could not fetch video parts for BV ID: {bvid}")
+        # 如果失败，回退到原来的方法
+        video_parts = get_video_parts(bvid)
+        if not video_parts:
+            raise HTTPException(status_code=500, detail=f"Could not fetch video parts for BV ID: {bvid}")
+        # 转换为统一格式
+        video_parts = [{"title": part['part'], "page": part['page'], "cover_url": ""} for part in video_parts]
+    else:
+        # 下载并缓存封面
+        enhanced_parts = []
+        for part in video_parts:
+            cover_path = await download_and_cache_cover(bvid, part['page'], part['cover_url'])
+            enhanced_parts.append({
+                "title": part['part'],
+                "page": part['page'],
+                "cover_url": cover_path,
+                "duration": part.get('duration', 0)
+            })
+        video_parts = enhanced_parts
 
-    # Return a list of video parts with their title and page number
-    return [{"title": part['part'], "page": part['page']} for part in video_parts]
+    return video_parts
 
 
 @app.get("/api/play/{folder_name}/{page_number}")
@@ -255,6 +349,14 @@ async def serve_static_video(folder_name: str, file_name: str):
         raise HTTPException(status_code=404, detail="File not found.")
     return FileResponse(file_path)
 
+@app.get("/covers/{file_name}")
+async def serve_cover_image(file_name: str):
+    """Serves the cover images statically."""
+    file_path = COVERS_DIR / file_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Cover image not found.")
+    return FileResponse(file_path)
+
 # --- Frontend Routes ---
 @app.get("/", response_class=HTMLResponse)
 async def serve_frontend():
@@ -269,6 +371,14 @@ async def serve_frontend_files(file_path: str):
     """服务前端静态文件"""
     file = FRONTEND_DIR / file_path
     if file.exists() and file.is_file():
+        # 为前端文件添加缓存控制头
+        if file_path.endswith(('.js', '.css')):
+            headers = {
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+            return FileResponse(file, headers=headers)
         return FileResponse(file)
     # 如果文件不存在，返回主页（用于SPA路由）
     index_file = FRONTEND_DIR / "index.html"

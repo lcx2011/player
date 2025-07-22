@@ -49,6 +49,17 @@ videos/**/*.m4v
 # Keep list.txt files
 !videos/**/list.txt
 
+# Covers (exclude cached cover images)
+covers/
+covers/**/*.jpg
+covers/**/*.png
+covers/**/*.jpeg
+covers/**/*.webp
+
+# Cover images cache (exclude all cover files but keep directory structure)
+covers/**/*
+!covers/.gitkeep
+
 # Logs
 *.log
 logs/

@@ -130,23 +130,43 @@ class VideoPlayerApp {
             const videoElement = document.createElement('div');
             videoElement.className = 'video-item';
             videoElement.style.animationDelay = `${index * 0.1}s`;
-            
+
+            // 构建缩略图HTML
+            let thumbnailHTML = '';
+            if (video.cover_url && video.cover_url !== '') {
+                thumbnailHTML = `
+                    <img src="${this.apiBase}${video.cover_url}" alt="${video.title}"
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                    <div class="placeholder-icon" style="display: none;">🎬</div>
+                `;
+            } else {
+                thumbnailHTML = '<div class="placeholder-icon">🎬</div>';
+            }
+
             videoElement.innerHTML = `
                 <div class="video-thumbnail">
-                    🎬
+                    ${thumbnailHTML}
                 </div>
                 <div class="video-info">
                     <div class="video-title">${video.title}</div>
                     <div class="video-page">第 ${video.page} 集</div>
+                    ${video.duration ? `<div class="video-duration">${this.formatDuration(video.duration)}</div>` : ''}
                 </div>
             `;
-            
+
             videoElement.addEventListener('click', () => {
                 this.playVideo(video);
             });
-            
+
             container.appendChild(videoElement);
         });
+    }
+
+    formatDuration(seconds) {
+        if (!seconds) return '';
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
     }
 
     async playVideo(video) {

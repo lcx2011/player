@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import asyncio
+import aiohttp
+from typing import Optional, Dict, List, Any
 
 # 导入配置
 try:
@@ -53,6 +55,62 @@ HEADERS = {
     'referer': 'https://www.bilibili.com/'
 }
 
+# 全局异步HTTP客户端
+_http_session: Optional[aiohttp.ClientSession] = None
+
+# 内存缓存
+_video_parts_cache: Dict[str, Any] = {}
+_wbi_key_cache: Optional[str] = None
+_wbi_key_cache_time: float = 0
+
+async def get_http_session() -> aiohttp.ClientSession:
+    """获取全局HTTP会话"""
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        timeout = aiohttp.ClientTimeout(total=15)
+        connector = aiohttp.TCPConnector(ssl=False)  # 禁用SSL验证
+        _http_session = aiohttp.ClientSession(
+            headers=HEADERS,
+            timeout=timeout,
+            connector=connector
+        )
+    return _http_session
+
+async def close_http_session():
+    """关闭HTTP会话"""
+    global _http_session
+    if _http_session and not _http_session.closed:
+        await _http_session.close()
+        _http_session = None
+
+# 全局异步HTTP客户端
+_http_session: Optional[aiohttp.ClientSession] = None
+
+# 内存缓存
+_video_parts_cache: Dict[str, Any] = {}
+_wbi_key_cache: Optional[str] = None
+_wbi_key_cache_time: float = 0
+
+async def get_http_session() -> aiohttp.ClientSession:
+    """获取全局HTTP会话"""
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        timeout = aiohttp.ClientTimeout(total=15)
+        connector = aiohttp.TCPConnector(ssl=False)  # 禁用SSL验证
+        _http_session = aiohttp.ClientSession(
+            headers=HEADERS,
+            timeout=timeout,
+            connector=connector
+        )
+    return _http_session
+
+async def close_http_session():
+    """关闭HTTP会话"""
+    global _http_session
+    if _http_session and not _http_session.closed:
+        await _http_session.close()
+        _http_session = None
+
 
 
 # WBI签名相关常量和函数
@@ -65,6 +123,40 @@ MIXIN_KEY_ENC_TAB = [
 
 def get_mixin_key(orig: str):
     return reduce(lambda s, i: s + orig[i], MIXIN_KEY_ENC_TAB, '')[:32]
+
+async def get_wbi_keys_async(cookie: Optional[str] = None) -> Optional[str]:
+    """异步获取WBI密钥，带缓存"""
+    global _wbi_key_cache, _wbi_key_cache_time
+
+    # 检查缓存（5分钟有效期）
+    current_time = time.time()
+    if _wbi_key_cache and (current_time - _wbi_key_cache_time) < 300:
+        return _wbi_key_cache
+
+    try:
+        session = await get_http_session()
+        headers = {}
+        if cookie:
+            headers['Cookie'] = cookie
+
+        async with session.get('https://api.bilibili.com/x/web-interface/nav', headers=headers) as response:
+            if response.status == 200:
+                json_content = await response.json()
+                img_url: str = json_content['data']['wbi_img']['img_url']
+                sub_url: str = json_content['data']['wbi_img']['sub_url']
+                img_key = img_url.rsplit('/', 1)[1].split('.')[0]
+                sub_key = sub_url.rsplit('/', 1)[1].split('.')[0]
+
+                wbi_key = get_mixin_key(img_key + sub_key)
+
+                # 更新缓存
+                _wbi_key_cache = wbi_key
+                _wbi_key_cache_time = current_time
+
+                return wbi_key
+    except Exception as e:
+        print(f"异步获取WBI密钥失败: {e}")
+    return None
 
 def get_wbi_keys(cookie=None):
     try:
@@ -104,6 +196,20 @@ def convert_seconds_to_lrc_time(seconds):
 def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', "", name)
 
+async def get_bilibili_response_async(url: str, params: Optional[Dict] = None) -> Optional[aiohttp.ClientResponse]:
+    """异步发送请求到B站API端点"""
+    try:
+        session = await get_http_session()
+        async with session.get(url, params=params) as response:
+            if response.status == 200:
+                return response
+            else:
+                print(f"HTTP {response.status}: {url}")
+                return None
+    except Exception as e:
+        print(f"异步请求失败: {e}")
+        return None
+
 def get_bilibili_response(url, params=None):
     """Sends a request to a Bilibili API endpoint."""
     try:
@@ -128,6 +234,59 @@ def extract_bvid_from_url(url_or_bvid: str) -> str:
     else:
         # Assume it's already a BV ID
         return url_or_bvid
+
+async def get_video_parts_with_covers_async(bvid: str) -> Optional[List[Dict]]:
+    """异步获取视频分P信息和封面，带缓存"""
+    # 检查缓存
+    cache_key = f"parts_covers_{bvid}"
+    if cache_key in _video_parts_cache:
+        return _video_parts_cache[cache_key]
+
+    try:
+        session = await get_http_session()
+        url = f"https://www.bilibili.com/video/{bvid}"
+
+        async with session.get(url) as response:
+            if response.status != 200:
+                return None
+
+            html_content = await response.text()
+
+        # 提取JSON数据
+        match = re.search(r'<script>window\.__INITIAL_STATE__=(.*?);\(function\(\)', html_content)
+        if not match:
+            print(f"未找到视频数据: {bvid}")
+            return None
+
+        json_data_string = match.group(1)
+        data = json.loads(json_data_string)
+
+        # 获取视频分P列表
+        video_parts = data.get('videoData', {}).get('pages', [])
+        if not video_parts:
+            print(f"未找到分P视频: {bvid}")
+            return None
+
+        # 为每个分P添加封面信息
+        enhanced_parts = []
+        for part in video_parts:
+            enhanced_part = {
+                'cid': part.get('cid'),
+                'page': part.get('page'),
+                'part': part.get('part'),
+                'duration': part.get('duration'),
+                'cover_url': part.get('first_frame', ''),
+                'dimension': part.get('dimension', {})
+            }
+            enhanced_parts.append(enhanced_part)
+
+        # 缓存结果
+        _video_parts_cache[cache_key] = enhanced_parts
+        return enhanced_parts
+
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"异步获取视频信息失败: {e}")
+        return None
 
 def get_video_parts_with_covers(bvid: str):
     """Fetches video parts and their cover images from Bilibili page."""
@@ -174,6 +333,30 @@ def get_video_parts_with_covers(bvid: str):
         print(f"获取视频信息失败: {e}")
         return None
 
+async def get_video_parts_async(bvid: str) -> Optional[List[Dict]]:
+    """异步获取视频分P基本信息，带缓存"""
+    # 检查缓存
+    cache_key = f"parts_{bvid}"
+    if cache_key in _video_parts_cache:
+        return _video_parts_cache[cache_key]
+
+    try:
+        session = await get_http_session()
+        url = 'https://api.bilibili.com/x/player/pagelist'
+        params = {'bvid': bvid, 'jsonp': 'jsonp'}
+
+        async with session.get(url, params=params) as response:
+            if response.status == 200:
+                data = await response.json()
+                if data['code'] == 0:
+                    result = data['data']
+                    # 缓存结果
+                    _video_parts_cache[cache_key] = result
+                    return result
+    except Exception as e:
+        print(f"异步获取视频分P失败: {e}")
+    return None
+
 def get_video_parts(bvid: str):
     """Fetches the list of video parts (pages) for a given Bilibili BV ID."""
     url = 'https://api.bilibili.com/x/player/pagelist'
@@ -187,6 +370,36 @@ def get_video_parts(bvid: str):
         except (ValueError, KeyError):
             return None
     return None
+
+async def download_and_cache_cover_async(bvid: str, page: int, cover_url: str) -> str:
+    """异步下载并缓存封面图片，返回本地路径"""
+    if not cover_url:
+        return ""
+
+    # 确保URL协议完整
+    if cover_url.startswith('//'):
+        cover_url = 'http:' + cover_url
+
+    # 生成缓存文件名
+    cover_filename = f"{bvid}_p{page}.jpg"
+    cover_path = COVERS_DIR / cover_filename
+
+    # 如果已经缓存，直接返回
+    if cover_path.exists():
+        return f"/covers/{cover_filename}"
+
+    try:
+        session = await get_http_session()
+        async with session.get(cover_url) as response:
+            if response.status == 200:
+                content = await response.read()
+                with open(cover_path, 'wb') as f:
+                    f.write(content)
+                return f"/covers/{cover_filename}"
+    except Exception as e:
+        print(f"异步下载封面失败: {e}")
+
+    return ""
 
 async def download_and_cache_cover(bvid: str, page: int, cover_url: str) -> str:
     """下载并缓存封面图片，返回本地路径"""
@@ -216,6 +429,44 @@ async def download_and_cache_cover(bvid: str, page: int, cover_url: str) -> str:
         print(f"下载封面失败: {e}")
 
     return ""
+
+async def check_subtitle_availability_async(bvid: str, page: int, cid: int) -> bool:
+    """异步检查视频是否有字幕可用"""
+    try:
+        # 如果没有配置Cookie，直接返回False
+        if not BILIBILI_COOKIE:
+            return False
+
+        # 获取WBI签名密钥
+        wbi_key = await get_wbi_keys_async(BILIBILI_COOKIE)
+        if not wbi_key:
+            return False
+
+        # 构建请求参数
+        params = {'bvid': bvid, 'cid': cid}
+        signed_params = sign_wbi_params(params, wbi_key)
+
+        # 异步请求字幕API
+        session = await get_http_session()
+        player_api_url = "https://api.bilibili.com/x/player/wbi/v2"
+        headers = {'Cookie': BILIBILI_COOKIE}
+
+        async with session.get(player_api_url, params=signed_params, headers=headers) as response:
+            if response.status != 200:
+                return False
+
+            subtitle_data = await response.json()
+            if subtitle_data.get('code') != 0:
+                return False
+
+            subtitles_list = subtitle_data.get('data', {}).get('subtitle', {}).get('subtitles', [])
+            # 检查是否有用户上传的字幕
+            user_subtitle = next((s for s in subtitles_list if s.get('ai_type') == 0 and s.get('subtitle_url')), None)
+            return user_subtitle is not None
+
+    except Exception as e:
+        print(f"异步检查字幕可用性失败: {e}")
+        return False
 
 async def check_subtitle_availability(bvid: str, page: int, cid: int) -> bool:
     """检查视频是否有字幕可用"""
@@ -271,6 +522,8 @@ async def check_subtitle_availability(bvid: str, page: int, cid: int) -> bool:
     except Exception as e:
         print(f"检查字幕可用性失败: {e}")
         return False
+
+
 
 async def download_and_cache_subtitle(bvid: str, page: int, cid: int) -> str:
     """下载并缓存字幕文件，返回本地路径"""
@@ -444,8 +697,8 @@ async def list_folders():
 @app.get("/api/folders/{folder_name}")
 async def list_videos_in_folder(folder_name: str):
     """
-    Lists all video parts from a 'list.txt' file in a specific folder.
-    快速返回基本信息，不下载封面。
+    快速返回视频列表基本信息，实现分阶段加载
+    第一阶段：立即返回基本信息（标题、分P数量）
     """
     folder_path = VIDEOS_DIR / folder_name
     list_file = folder_path / "list.txt"
@@ -459,53 +712,135 @@ async def list_videos_in_folder(folder_name: str):
     if not bvid_lines:
         raise HTTPException(status_code=404, detail=f"'list.txt' is empty or contains no valid BV IDs.")
 
-    # For simplicity, we'll use the first BV ID found in the file.
     try:
         bvid = extract_bvid_from_url(bvid_lines[0])
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # 优先使用带封面的获取方法
-    video_parts = get_video_parts_with_covers(bvid)
+    # 使用异步函数获取基本信息，优先尝试详细信息
+    video_parts = await get_video_parts_async(bvid)
     if not video_parts:
-        # 如果失败，回退到原来的方法
-        video_parts = get_video_parts(bvid)
-        if not video_parts:
-            raise HTTPException(status_code=500, detail=f"Could not fetch video parts for BV ID: {bvid}")
-        # 转换为统一格式
-        video_parts = [{"title": part['part'], "page": part['page'], "cover_url": "", "duration": 0, "cid": part.get('cid', 0)} for part in video_parts]
-    else:
-        # 不立即下载封面，只返回基本信息和封面URL
-        enhanced_parts = []
-        for part in video_parts:
-            enhanced_parts.append({
-                "title": part['part'],
-                "page": part['page'],
-                "cover_url": "",  # 暂时为空，稍后异步加载
-                "cover_source": part['cover_url'],  # 保存原始封面URL
-                "duration": part.get('duration', 0),
-                "cid": part['cid'],
-                "bvid": bvid
-            })
-        video_parts = enhanced_parts
+        raise HTTPException(status_code=500, detail=f"Could not fetch video parts for BV ID: {bvid}")
 
-    return video_parts
+    # 快速返回基本信息，不包含封面和详细信息
+    enhanced_parts = []
+    for part in video_parts:
+        enhanced_parts.append({
+            "title": part['part'],
+            "page": part['page'],
+            "cover_url": "",  # 稍后异步加载
+            "duration": part.get('duration', 0),
+            "cid": part['cid'],
+            "bvid": bvid,
+            "has_subtitle": None  # 稍后异步检查
+        })
+
+    return enhanced_parts
+
+@app.get("/api/folders/{folder_name}/details")
+async def get_videos_details(folder_name: str):
+    """
+    第二阶段：获取视频详细信息（封面、字幕状态等）
+    """
+    folder_path = VIDEOS_DIR / folder_name
+    list_file = folder_path / "list.txt"
+
+    if not list_file.exists():
+        raise HTTPException(status_code=404, detail=f"'list.txt' not found in folder '{folder_name}'")
+
+    with open(list_file, 'r', encoding='utf-8') as f:
+        bvid_lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+
+    if not bvid_lines:
+        raise HTTPException(status_code=404, detail=f"'list.txt' is empty or contains no valid BV IDs.")
+
+    try:
+        bvid = extract_bvid_from_url(bvid_lines[0])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # 获取详细信息（包含封面URL）
+    video_parts = await get_video_parts_with_covers_async(bvid)
+    if not video_parts:
+        raise HTTPException(status_code=500, detail=f"Could not fetch detailed video parts for BV ID: {bvid}")
+
+    # 返回详细信息
+    detailed_parts = []
+    for part in video_parts:
+        # 异步检查字幕可用性
+        has_subtitle = await check_subtitle_availability_async(bvid, part['page'], part['cid'])
+
+        detailed_parts.append({
+            "page": part['page'],
+            "cover_source": part.get('cover_url', ''),
+            "duration": part.get('duration', 0),
+            "has_subtitle": has_subtitle
+        })
+
+    return detailed_parts
+
+@app.get("/api/batch/covers/{bvid}")
+async def get_batch_covers(bvid: str, pages: str):
+    """
+    批量获取多个分P的封面
+    pages: 逗号分隔的页码，如 "1,2,3"
+    """
+    try:
+        page_numbers = [int(p.strip()) for p in pages.split(',') if p.strip().isdigit()]
+        if not page_numbers:
+            return {"covers": {}}
+
+        # 获取视频详细信息
+        video_parts = await get_video_parts_with_covers_async(bvid)
+        if not video_parts:
+            return {"covers": {}}
+
+        # 创建页码到封面URL的映射
+        page_to_cover = {}
+        for part in video_parts:
+            if part['page'] in page_numbers:
+                page_to_cover[part['page']] = part.get('cover_url', '')
+
+        # 批量下载封面
+        covers = {}
+        for page_num in page_numbers:
+            cover_url = page_to_cover.get(page_num, '')
+            if cover_url:
+                # 检查是否已缓存
+                cover_filename = f"{bvid}_p{page_num}.jpg"
+                cover_path = COVERS_DIR / cover_filename
+
+                if cover_path.exists():
+                    covers[str(page_num)] = f"/covers/{cover_filename}"
+                else:
+                    # 异步下载
+                    downloaded_url = await download_and_cache_cover_async(bvid, page_num, cover_url)
+                    if downloaded_url:
+                        covers[str(page_num)] = downloaded_url
+
+        return {"covers": covers}
+
+    except Exception as e:
+        print(f"批量获取封面失败: {e}")
+        return {"covers": {}}
+
+
 
 @app.get("/api/cover/{bvid}/{page_number}")
 async def get_video_cover(bvid: str, page_number: int):
-    """异步获取单个视频的封面"""
+    """异步获取单个视频的封面，优化性能"""
     try:
         # 检查是否已经缓存
         cover_filename = f"{bvid}_p{page_number}.jpg"
         cover_path = COVERS_DIR / cover_filename
 
         if cover_path.exists():
-            return {"cover_url": f"/covers/{cover_filename}"}
+            return {"cover_url": f"/covers/{cover_filename}", "cached": True}
 
-        # 获取视频信息来找到封面URL
-        video_parts = get_video_parts_with_covers(bvid)
+        # 使用异步函数获取视频信息
+        video_parts = await get_video_parts_with_covers_async(bvid)
         if not video_parts:
-            return {"cover_url": ""}
+            return {"cover_url": "", "cached": False}
 
         # 找到对应的分P
         target_part = None
@@ -515,22 +850,71 @@ async def get_video_cover(bvid: str, page_number: int):
                 break
 
         if not target_part or not target_part.get('cover_url'):
-            return {"cover_url": ""}
+            return {"cover_url": "", "cached": False}
 
         # 下载并缓存封面
-        cover_url = await download_and_cache_cover(bvid, page_number, target_part['cover_url'])
-        return {"cover_url": cover_url}
+        cover_url = await download_and_cache_cover_async(bvid, page_number, target_part['cover_url'])
+        return {"cover_url": cover_url, "cached": False}
 
     except Exception as e:
         print(f"获取封面失败: {e}")
-        return {"cover_url": ""}
+        return {"cover_url": "", "cached": False}
+
+@app.post("/api/covers/preload")
+async def preload_covers(request_data: dict):
+    """
+    预加载封面，用于提升用户体验
+    request_data: {"bvid": "BV1xx", "pages": [1, 2, 3]}
+    """
+    try:
+        bvid = request_data.get('bvid')
+        pages = request_data.get('pages', [])
+
+        if not bvid or not pages:
+            return {"status": "error", "message": "Missing bvid or pages"}
+
+        # 获取视频详细信息
+        video_parts = await get_video_parts_with_covers_async(bvid)
+        if not video_parts:
+            return {"status": "error", "message": "Could not fetch video parts"}
+
+        # 创建页码到封面URL的映射
+        page_to_cover = {}
+        for part in video_parts:
+            if part['page'] in pages:
+                page_to_cover[part['page']] = part.get('cover_url', '')
+
+        # 异步预加载封面（不等待完成）
+        preload_tasks = []
+        for page_num in pages:
+            cover_url = page_to_cover.get(page_num, '')
+            if cover_url:
+                # 检查是否已缓存
+                cover_filename = f"{bvid}_p{page_num}.jpg"
+                cover_path = COVERS_DIR / cover_filename
+
+                if not cover_path.exists():
+                    # 创建预加载任务
+                    task = asyncio.create_task(
+                        download_and_cache_cover_async(bvid, page_num, cover_url)
+                    )
+                    preload_tasks.append(task)
+
+        # 启动预加载任务（不等待完成）
+        if preload_tasks:
+            asyncio.create_task(asyncio.gather(*preload_tasks, return_exceptions=True))
+
+        return {"status": "success", "preloading": len(preload_tasks)}
+
+    except Exception as e:
+        print(f"预加载封面失败: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @app.get("/api/play/{folder_name}/{page_number}")
 async def play_video(folder_name: str, page_number: int):
     """
-    Ensures a video is downloaded and returns its static file path.
-    If the video doesn't exist, it's downloaded in the background.
+    播放视频，包含字幕检查（恢复原有功能）
     """
     folder_path = VIDEOS_DIR / folder_name
     list_file = folder_path / "list.txt"
@@ -548,8 +932,9 @@ async def play_video(folder_name: str, page_number: int):
         bvid = extract_bvid_from_url(bvid_lines[0])
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
-    video_parts = get_video_parts(bvid)
+
+    # 使用异步函数获取视频分P信息
+    video_parts = await get_video_parts_async(bvid)
     if not video_parts:
         raise HTTPException(status_code=500, detail="Could not fetch video parts.")
 
@@ -558,14 +943,14 @@ async def play_video(folder_name: str, page_number: int):
         if part['page'] == page_number:
             target_part = part
             break
-    
+
     if not target_part:
         raise HTTPException(status_code=404, detail=f"Page number {page_number} not found for this BV ID.")
 
     clean_name = re.sub(r'[\\/*?:"<>|]', "", target_part['part'])
     final_video_path = folder_path / f"{clean_name}.mp4"
 
-    # 检查字幕可用性和获取字幕
+    # 检查字幕可用性和获取字幕（恢复原有功能）
     has_subtitle = await check_subtitle_availability(bvid, page_number, target_part['cid'])
     subtitle_url = ""
     if has_subtitle:
@@ -581,9 +966,8 @@ async def play_video(folder_name: str, page_number: int):
         }
 
     # If file does not exist, start download and return a "pending" status.
-    # The frontend will need to poll or wait.
     try:
-        # Using a synchronous function in a thread pool
+        # 使用异步线程池下载
         await asyncio.to_thread(download_and_merge, bvid, target_part, folder_path)
         return {
             "status": "ready",
@@ -593,6 +977,8 @@ async def play_video(folder_name: str, page_number: int):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to download video: {str(e)}")
+
+
 
 
 @app.get("/static/{folder_name}/{file_name}")
@@ -693,6 +1079,13 @@ async def serve_frontend_files(file_path: str):
         return HTMLResponse(content=index_file.read_text(encoding='utf-8'))
     return HTMLResponse("<h1>File not found</h1>", status_code=404)
 
+# --- 应用生命周期管理 ---
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时清理资源"""
+    await close_http_session()
+    print("🔄 HTTP会话已关闭")
+
 # --- Main Execution ---
 if __name__ == "__main__":
     import uvicorn
@@ -700,4 +1093,5 @@ if __name__ == "__main__":
     print(f"📁 视频目录: {VIDEOS_DIR.resolve()}")
     print(f"🌐 前端目录: {FRONTEND_DIR.resolve()}")
     print("🚀 服务地址: http://localhost:8000")
+    print("⚡ 性能优化：异步网络请求 + 分阶段加载")
     uvicorn.run(app, host="0.0.0.0", port=8000)

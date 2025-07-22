@@ -2,12 +2,26 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#4CAF50">
-    <title>儿童视频播放器</title>
-    <link rel="stylesheet" href="styles.css?v=20250722">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#FF6B6B">
+    <meta name="description" content="专为儿童设计的B站视频播放应用，安全、简单、有趣">
+    <meta name="keywords" content="儿童视频,B站下载,视频播放器,儿童应用">
+    <meta name="author" content="儿童视频播放器">
+
+    <!-- PWA相关 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="儿童视频播放器">
+
+    <!-- 预加载关键资源 -->
+    <link rel="preload" href="styles.css?v=20250722-2" as="style">
+    <link rel="preload" href="app.js?v=20250722-2" as="script">
+
+    <title>🎬 儿童视频播放器</title>
+    <link rel="stylesheet" href="styles.css?v=20250722-2">
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icon-192x192.png">
+    <link rel="apple-touch-icon" href="icon-192x192.png">
 </head>
 <body>
     <!-- 加载页面 -->
@@ -80,6 +94,6 @@
         <span id="error-message"></span>
     </div>
 
-    <script src="app.js?v=20250722"></script>
+    <script src="app.js?v=20250722-2"></script>
 </body>
 </html>

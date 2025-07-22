@@ -83,17 +83,27 @@ class VideoPlayerApp {
         folders.forEach((folder, index) => {
             const folderElement = document.createElement('div');
             folderElement.className = 'folder-item';
-            folderElement.style.animationDelay = `${index * 0.1}s`;
-            
+            folderElement.style.animationDelay = `${index * 0.15}s`;
+            folderElement.setAttribute('tabindex', '0'); // 键盘可访问性
+
             folderElement.innerHTML = `
                 <span class="folder-icon">📁</span>
                 <div class="folder-name">${folder}</div>
             `;
-            
-            folderElement.addEventListener('click', () => {
+
+            // 点击和键盘事件
+            const handleActivation = () => {
                 this.loadVideos(folder);
+            };
+
+            folderElement.addEventListener('click', handleActivation);
+            folderElement.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleActivation();
+                }
             });
-            
+
             container.appendChild(folderElement);
         });
     }
@@ -138,8 +148,9 @@ class VideoPlayerApp {
         videos.forEach((video, index) => {
             const videoElement = document.createElement('div');
             videoElement.className = 'video-item';
-            videoElement.style.animationDelay = `${index * 0.1}s`;
-            videoElement.dataset.videoPage = video.page; // 添加数据属性用于后续查找
+            videoElement.style.animationDelay = `${index * 0.12}s`;
+            videoElement.dataset.videoPage = video.page;
+            videoElement.setAttribute('tabindex', '0'); // 键盘可访问性
 
             // 初始显示占位符，添加加载状态
             const thumbnailHTML = '<div class="placeholder-icon">🎬</div>';
@@ -155,8 +166,17 @@ class VideoPlayerApp {
                 </div>
             `;
 
-            videoElement.addEventListener('click', () => {
+            // 点击和键盘事件
+            const handleActivation = () => {
                 this.playVideo(video);
+            };
+
+            videoElement.addEventListener('click', handleActivation);
+            videoElement.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleActivation();
+                }
             });
 
             container.appendChild(videoElement);

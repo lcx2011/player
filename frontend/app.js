@@ -251,19 +251,45 @@ class VideoPlayerApp {
         }
     }
 
+    clearVideoPlayer() {
+        const videoPlayer = document.getElementById('video-player');
+        const videoSource = document.getElementById('video-source');
+        const subtitleTrack = document.getElementById('subtitle-track');
+
+        // 暂停并清空当前视频
+        videoPlayer.pause();
+        videoSource.src = '';
+        subtitleTrack.src = '';
+        subtitleTrack.style.display = 'none';
+
+        // 重新加载播放器以清除缓存
+        videoPlayer.load();
+
+        // 重置字幕状态
+        this.subtitleEnabled = false;
+        const subtitleToggle = document.getElementById('subtitle-toggle');
+        subtitleToggle.disabled = true;
+        subtitleToggle.classList.remove('active');
+    }
+
     loadVideoPlayer(videoUrl) {
         const videoPlayer = document.getElementById('video-player');
         const videoSource = document.getElementById('video-source');
-        
+
+        // 设置新的视频源
         videoSource.src = `${this.apiBase}${videoUrl}`;
+
+        // 重新加载播放器
         videoPlayer.load();
-        
+
         this.hideDownloadProgress();
-        
-        // 自动播放（某些浏览器可能需要用户交互）
-        videoPlayer.play().catch(e => {
-            console.log('自动播放被阻止，需要用户手动播放');
-        });
+
+        // 等待视频加载完成后自动播放
+        videoPlayer.addEventListener('loadeddata', () => {
+            videoPlayer.play().catch(e => {
+                console.log('自动播放被阻止，需要用户手动播放');
+            });
+        }, { once: true }); // 只执行一次
     }
 
     showDownloadProgress() {
@@ -301,31 +327,32 @@ class VideoPlayerApp {
 
     setupSubtitleButton(video) {
         const subtitleToggle = document.getElementById('subtitle-toggle');
+        const subtitleTrack = document.getElementById('subtitle-track');
+
+        // 先重置字幕状态
+        subtitleToggle.classList.remove('active');
+        this.subtitleEnabled = false;
+        subtitleTrack.src = '';
+        subtitleTrack.style.display = 'none';
 
         if (video.has_subtitle && video.subtitle_url) {
             // 有字幕可用
             subtitleToggle.disabled = false;
-            subtitleToggle.classList.remove('active');
-            this.subtitleEnabled = false;
 
             // 加载字幕
             this.loadSubtitle(video.subtitle_url);
         } else {
             // 无字幕可用
             subtitleToggle.disabled = true;
-            subtitleToggle.classList.remove('active');
-            this.subtitleEnabled = false;
-
-            // 清除字幕轨道
-            const subtitleTrack = document.getElementById('subtitle-track');
-            subtitleTrack.src = '';
-            subtitleTrack.style.display = 'none';
         }
     }
 
     loadSubtitle(subtitleUrl) {
         try {
             const subtitleTrack = document.getElementById('subtitle-track');
+            const videoPlayer = document.getElementById('video-player');
+
+            // 设置字幕源
             subtitleTrack.src = `${this.apiBase}${subtitleUrl}`;
             subtitleTrack.style.display = 'block';
 
@@ -333,13 +360,20 @@ class VideoPlayerApp {
             this.subtitleEnabled = true;
             document.getElementById('subtitle-toggle').classList.add('active');
 
-            // 启用字幕轨道
-            const videoPlayer = document.getElementById('video-player');
-            videoPlayer.addEventListener('loadedmetadata', () => {
+            // 等待视频和字幕都加载完成后启用字幕
+            const enableSubtitle = () => {
                 if (videoPlayer.textTracks.length > 0) {
                     videoPlayer.textTracks[0].mode = 'showing';
                 }
-            });
+            };
+
+            // 如果视频已经加载，立即启用字幕
+            if (videoPlayer.readyState >= 1) {
+                enableSubtitle();
+            } else {
+                // 否则等待视频加载
+                videoPlayer.addEventListener('loadedmetadata', enableSubtitle, { once: true });
+            }
         } catch (error) {
             console.error('加载字幕失败:', error);
         }

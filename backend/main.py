@@ -445,7 +445,7 @@ async def list_folders():
 async def list_videos_in_folder(folder_name: str):
     """
     Lists all video parts from a 'list.txt' file in a specific folder.
-    It fetches the part information and covers from Bilibili.
+    快速返回基本信息，不下载封面。
     """
     folder_path = VIDEOS_DIR / folder_name
     list_file = folder_path / "list.txt"
@@ -473,22 +473,57 @@ async def list_videos_in_folder(folder_name: str):
         if not video_parts:
             raise HTTPException(status_code=500, detail=f"Could not fetch video parts for BV ID: {bvid}")
         # 转换为统一格式
-        video_parts = [{"title": part['part'], "page": part['page'], "cover_url": ""} for part in video_parts]
+        video_parts = [{"title": part['part'], "page": part['page'], "cover_url": "", "duration": 0, "cid": part.get('cid', 0)} for part in video_parts]
     else:
-        # 下载并缓存封面
+        # 不立即下载封面，只返回基本信息和封面URL
         enhanced_parts = []
         for part in video_parts:
-            cover_path = await download_and_cache_cover(bvid, part['page'], part['cover_url'])
             enhanced_parts.append({
                 "title": part['part'],
                 "page": part['page'],
-                "cover_url": cover_path,
+                "cover_url": "",  # 暂时为空，稍后异步加载
+                "cover_source": part['cover_url'],  # 保存原始封面URL
                 "duration": part.get('duration', 0),
-                "cid": part['cid']
+                "cid": part['cid'],
+                "bvid": bvid
             })
         video_parts = enhanced_parts
 
     return video_parts
+
+@app.get("/api/cover/{bvid}/{page_number}")
+async def get_video_cover(bvid: str, page_number: int):
+    """异步获取单个视频的封面"""
+    try:
+        # 检查是否已经缓存
+        cover_filename = f"{bvid}_p{page_number}.jpg"
+        cover_path = COVERS_DIR / cover_filename
+
+        if cover_path.exists():
+            return {"cover_url": f"/covers/{cover_filename}"}
+
+        # 获取视频信息来找到封面URL
+        video_parts = get_video_parts_with_covers(bvid)
+        if not video_parts:
+            return {"cover_url": ""}
+
+        # 找到对应的分P
+        target_part = None
+        for part in video_parts:
+            if part['page'] == page_number:
+                target_part = part
+                break
+
+        if not target_part or not target_part.get('cover_url'):
+            return {"cover_url": ""}
+
+        # 下载并缓存封面
+        cover_url = await download_and_cache_cover(bvid, page_number, target_part['cover_url'])
+        return {"cover_url": cover_url}
+
+    except Exception as e:
+        print(f"获取封面失败: {e}")
+        return {"cover_url": ""}
 
 
 @app.get("/api/play/{folder_name}/{page_number}")

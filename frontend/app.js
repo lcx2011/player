@@ -112,6 +112,9 @@ class VideoPlayerApp {
             const videos = await response.json();
             this.renderVideos(videos);
             this.showScreen('videos');
+
+            // 异步加载封面
+            this.loadCoversAsync(videos);
         } catch (error) {
             this.showError('加载视频列表失败');
             console.error('Error loading videos:', error);
@@ -136,21 +139,13 @@ class VideoPlayerApp {
             const videoElement = document.createElement('div');
             videoElement.className = 'video-item';
             videoElement.style.animationDelay = `${index * 0.1}s`;
+            videoElement.dataset.videoPage = video.page; // 添加数据属性用于后续查找
 
-            // 构建缩略图HTML
-            let thumbnailHTML = '';
-            if (video.cover_url && video.cover_url !== '') {
-                thumbnailHTML = `
-                    <img src="${this.apiBase}${video.cover_url}" alt="${video.title}"
-                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                    <div class="placeholder-icon" style="display: none;">🎬</div>
-                `;
-            } else {
-                thumbnailHTML = '<div class="placeholder-icon">🎬</div>';
-            }
+            // 初始显示占位符，添加加载状态
+            const thumbnailHTML = '<div class="placeholder-icon">🎬</div>';
 
             videoElement.innerHTML = `
-                <div class="video-thumbnail">
+                <div class="video-thumbnail loading">
                     ${thumbnailHTML}
                 </div>
                 <div class="video-info">
@@ -168,6 +163,45 @@ class VideoPlayerApp {
         });
     }
 
+    async loadCoversAsync(videos) {
+        // 异步加载每个视频的封面
+        for (const video of videos) {
+            if (video.bvid) {
+                try {
+                    // 延迟一点时间，避免同时发起太多请求
+                    await new Promise(resolve => setTimeout(resolve, 100));
+
+                    const response = await fetch(`${this.apiBase}/api/cover/${video.bvid}/${video.page}`);
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.cover_url) {
+                            this.updateVideoCover(video.page, result.cover_url);
+                        }
+                    }
+                } catch (error) {
+                    console.error(`加载封面失败 (${video.title}):`, error);
+                }
+            }
+        }
+    }
+
+    updateVideoCover(page, coverUrl) {
+        // 找到对应的视频元素并更新封面
+        const videoElement = document.querySelector(`[data-video-page="${page}"]`);
+        if (videoElement) {
+            const thumbnail = videoElement.querySelector('.video-thumbnail');
+            if (thumbnail) {
+                // 移除加载状态
+                thumbnail.classList.remove('loading');
+                thumbnail.innerHTML = `
+                    <img src="${this.apiBase}${coverUrl}" alt="视频封面"
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                    <div class="placeholder-icon" style="display: none;">🎬</div>
+                `;
+            }
+        }
+    }
+
     formatDuration(seconds) {
         if (!seconds) return '';
         const minutes = Math.floor(seconds / 60);
@@ -179,7 +213,10 @@ class VideoPlayerApp {
         try {
             this.currentVideo = video;
             document.getElementById('video-title').textContent = `🎬 ${video.title}`;
-            
+
+            // 先清空播放器
+            this.clearVideoPlayer();
+
             this.showScreen('player');
             this.showDownloadProgress();
             

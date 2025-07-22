@@ -52,8 +52,14 @@
         </header>
         <main class="content player-content">
             <div id="video-container">
+                <div class="video-controls">
+                    <button id="subtitle-toggle" class="subtitle-toggle" disabled>
+                        <span>字幕</span>
+                    </button>
+                </div>
                 <video id="video-player" controls playsinline>
                     <source id="video-source" src="" type="video/mp4">
+                    <track id="subtitle-track" kind="subtitles" src="" srclang="zh" label="中文字幕" default style="display: none;">
                     您的浏览器不支持视频播放。
                 </video>
             </div>

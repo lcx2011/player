@@ -5,6 +5,7 @@ class VideoPlayerApp {
         this.currentFolder = null;
         this.currentVideo = null;
         this.apiBase = window.location.origin;
+        this.subtitleEnabled = false;
         
         this.init();
     }
@@ -30,6 +31,11 @@ class VideoPlayerApp {
         
         document.getElementById('back-to-videos').addEventListener('click', () => {
             this.showScreen('videos');
+        });
+
+        // 字幕开关按钮
+        document.getElementById('subtitle-toggle').addEventListener('click', () => {
+            this.toggleSubtitle();
         });
     }
 
@@ -190,6 +196,12 @@ class VideoPlayerApp {
             
             if (result.status === 'ready') {
                 this.loadVideoPlayer(result.video_url);
+                // 设置字幕按钮状态，使用API返回的字幕信息
+                this.setupSubtitleButton({
+                    ...video,
+                    has_subtitle: result.has_subtitle,
+                    subtitle_url: result.subtitle_url
+                });
             } else {
                 // 如果视频还在下载，可以实现轮询检查状态
                 this.showError('视频正在准备中，请稍后重试');
@@ -248,6 +260,73 @@ class VideoPlayerApp {
         setTimeout(() => {
             errorToast.classList.add('hidden');
         }, 3000);
+    }
+
+    setupSubtitleButton(video) {
+        const subtitleToggle = document.getElementById('subtitle-toggle');
+
+        if (video.has_subtitle && video.subtitle_url) {
+            // 有字幕可用
+            subtitleToggle.disabled = false;
+            subtitleToggle.classList.remove('active');
+            this.subtitleEnabled = false;
+
+            // 加载字幕
+            this.loadSubtitle(video.subtitle_url);
+        } else {
+            // 无字幕可用
+            subtitleToggle.disabled = true;
+            subtitleToggle.classList.remove('active');
+            this.subtitleEnabled = false;
+
+            // 清除字幕轨道
+            const subtitleTrack = document.getElementById('subtitle-track');
+            subtitleTrack.src = '';
+            subtitleTrack.style.display = 'none';
+        }
+    }
+
+    loadSubtitle(subtitleUrl) {
+        try {
+            const subtitleTrack = document.getElementById('subtitle-track');
+            subtitleTrack.src = `${this.apiBase}${subtitleUrl}`;
+            subtitleTrack.style.display = 'block';
+
+            // 默认开启字幕
+            this.subtitleEnabled = true;
+            document.getElementById('subtitle-toggle').classList.add('active');
+
+            // 启用字幕轨道
+            const videoPlayer = document.getElementById('video-player');
+            videoPlayer.addEventListener('loadedmetadata', () => {
+                if (videoPlayer.textTracks.length > 0) {
+                    videoPlayer.textTracks[0].mode = 'showing';
+                }
+            });
+        } catch (error) {
+            console.error('加载字幕失败:', error);
+        }
+    }
+
+    toggleSubtitle() {
+        const videoPlayer = document.getElementById('video-player');
+        const subtitleToggle = document.getElementById('subtitle-toggle');
+
+        if (subtitleToggle.disabled) return;
+
+        this.subtitleEnabled = !this.subtitleEnabled;
+
+        if (this.subtitleEnabled) {
+            subtitleToggle.classList.add('active');
+            if (videoPlayer.textTracks.length > 0) {
+                videoPlayer.textTracks[0].mode = 'showing';
+            }
+        } else {
+            subtitleToggle.classList.remove('active');
+            if (videoPlayer.textTracks.length > 0) {
+                videoPlayer.textTracks[0].mode = 'hidden';
+            }
+        }
     }
 
     async registerServiceWorker() {

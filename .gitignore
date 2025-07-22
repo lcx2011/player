@@ -56,6 +56,15 @@ covers/**/*.png
 covers/**/*.jpeg
 covers/**/*.webp
 
+# Subtitles (exclude cached subtitle files)
+subtitles/
+subtitles/**/*.vtt
+subtitles/**/*.srt
+subtitles/**/*.lrc
+
+# Configuration files (contains sensitive Cookie information)
+backend/config.py
+
 # Cover images cache (exclude all cover files but keep directory structure)
 covers/**/*
 !covers/.gitkeep

@@ -3,21 +3,33 @@ import re
 import subprocess
 import requests
 import json
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+import time
+from functools import reduce
+from hashlib import md5
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import asyncio
 
+# 导入配置
+try:
+    from config import BILIBILI_COOKIE
+except ImportError:
+    BILIBILI_COOKIE = ""
+    print("警告: 未找到config.py文件，字幕功能将不可用")
+
 # --- Configuration ---
 BASE_DIR = Path(__file__).resolve().parent.parent
 VIDEOS_DIR = BASE_DIR / "videos"
 FRONTEND_DIR = BASE_DIR / "frontend"
 COVERS_DIR = BASE_DIR / "covers"  # 封面缓存目录
+SUBTITLES_DIR = BASE_DIR / "subtitles"  # 字幕缓存目录
 # Ensure the main directories exist
 VIDEOS_DIR.mkdir(exist_ok=True)
 COVERS_DIR.mkdir(exist_ok=True)
+SUBTITLES_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="Video Player Backend")
 
@@ -40,6 +52,57 @@ HEADERS = {
     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36',
     'referer': 'https://www.bilibili.com/'
 }
+
+
+
+# WBI签名相关常量和函数
+MIXIN_KEY_ENC_TAB = [
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+    33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+    61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
+    36, 20, 34, 44, 52
+]
+
+def get_mixin_key(orig: str):
+    return reduce(lambda s, i: s + orig[i], MIXIN_KEY_ENC_TAB, '')[:32]
+
+def get_wbi_keys(cookie=None):
+    try:
+        headers = HEADERS.copy()
+        if cookie:
+            headers['Cookie'] = cookie
+        resp = requests.get('https://api.bilibili.com/x/web-interface/nav', headers=headers)
+        resp.raise_for_status()
+        json_content = resp.json()
+        img_url: str = json_content['data']['wbi_img']['img_url']
+        sub_url: str = json_content['data']['wbi_img']['sub_url']
+        img_key = img_url.rsplit('/', 1)[1].split('.')[0]
+        sub_key = sub_url.rsplit('/', 1)[1].split('.')[0]
+        return get_mixin_key(img_key + sub_key)
+    except Exception as e:
+        print(f"获取WBI密钥失败: {e}")
+        return None
+
+def sign_wbi_params(params: dict, wbi_key: str):
+    params['wts'] = str(int(time.time()))
+    sorted_params = dict(sorted(params.items()))
+    query_parts = []
+    for k, v in sorted_params.items():
+        v_str = str(v).replace("'", "").replace("!", "").replace("(", "").replace(")", "").replace("*", "")
+        query_parts.append(f'{k}={v_str}')
+    query_string = '&'.join(query_parts)
+    w_rid = md5((query_string + wbi_key).encode()).hexdigest()
+    params['w_rid'] = w_rid
+    return params
+
+def convert_seconds_to_lrc_time(seconds):
+    millisec = int((seconds - int(seconds)) * 100)
+    minutes = int(seconds // 60)
+    sec = int(seconds % 60)
+    return f"[{minutes:02d}:{sec:02d}.{millisec:02d}]"
+
+def sanitize_filename(name):
+    return re.sub(r'[\\/*?:"<>|]', "", name)
 
 def get_bilibili_response(url, params=None):
     """Sends a request to a Bilibili API endpoint."""
@@ -153,6 +216,145 @@ async def download_and_cache_cover(bvid: str, page: int, cover_url: str) -> str:
         print(f"下载封面失败: {e}")
 
     return ""
+
+async def check_subtitle_availability(bvid: str, page: int, cid: int) -> bool:
+    """检查视频是否有字幕可用"""
+    try:
+        print(f"检查字幕可用性: bvid={bvid}, page={page}, cid={cid}")
+
+        # 如果没有配置Cookie，直接返回False
+        if not BILIBILI_COOKIE:
+            print("未配置B站Cookie，字幕功能不可用")
+            return False
+
+        # 获取WBI签名密钥
+        wbi_key = get_wbi_keys(BILIBILI_COOKIE)
+        if not wbi_key:
+            print("获取WBI密钥失败")
+            return False
+
+        # 构建请求参数
+        params = {'bvid': bvid, 'cid': cid}
+        signed_params = sign_wbi_params(params, wbi_key)
+
+        print(f"请求参数: {signed_params}")
+
+        # 请求字幕API，带上Cookie
+        player_api_url = "https://api.bilibili.com/x/player/wbi/v2"
+        headers = HEADERS.copy()
+        headers['Cookie'] = BILIBILI_COOKIE
+
+        response = requests.get(player_api_url, params=signed_params, headers=headers)
+
+        if not response:
+            print("字幕API请求失败")
+            return False
+
+        subtitle_data = response.json()
+        print(f"字幕API响应: code={subtitle_data.get('code')}, message={subtitle_data.get('message')}")
+
+        if subtitle_data.get('code') != 0:
+            print(f"字幕API返回错误: {subtitle_data.get('message')}")
+            return False
+
+        subtitles_list = subtitle_data.get('data', {}).get('subtitle', {}).get('subtitles', [])
+        print(f"找到字幕列表: {len(subtitles_list)} 个")
+
+        # 检查是否有用户上传的字幕
+        user_subtitle = next((s for s in subtitles_list if s.get('ai_type') == 0 and s.get('subtitle_url')), None)
+
+        has_subtitle = user_subtitle is not None
+        print(f"用户字幕可用: {has_subtitle}")
+
+        return has_subtitle
+
+    except Exception as e:
+        print(f"检查字幕可用性失败: {e}")
+        return False
+
+async def download_and_cache_subtitle(bvid: str, page: int, cid: int) -> str:
+    """下载并缓存字幕文件，返回本地路径"""
+    try:
+        print(f"开始下载字幕: bvid={bvid}, page={page}, cid={cid}")
+
+        # 生成字幕文件名
+        subtitle_filename = f"{bvid}_p{page}.vtt"
+        subtitle_path = SUBTITLES_DIR / subtitle_filename
+
+        # 如果已经缓存，直接返回
+        if subtitle_path.exists():
+            print(f"字幕已缓存: {subtitle_filename}")
+            return f"/subtitles/{subtitle_filename}"
+
+        # 如果没有配置Cookie，直接返回空
+        if not BILIBILI_COOKIE:
+            print("未配置B站Cookie，无法下载字幕")
+            return ""
+
+        # 获取WBI签名密钥
+        wbi_key = get_wbi_keys(BILIBILI_COOKIE)
+        if not wbi_key:
+            return ""
+
+        # 构建请求参数
+        params = {'bvid': bvid, 'cid': cid}
+        signed_params = sign_wbi_params(params, wbi_key)
+
+        # 请求字幕API，带上Cookie
+        player_api_url = "https://api.bilibili.com/x/player/wbi/v2"
+        headers = HEADERS.copy()
+        headers['Cookie'] = BILIBILI_COOKIE
+
+        response = requests.get(player_api_url, params=signed_params, headers=headers)
+
+        if not response or response.status_code != 200:
+            print("字幕API请求失败")
+            return ""
+
+        subtitle_data = response.json()
+        if subtitle_data.get('code') != 0:
+            print(f"字幕API返回错误: {subtitle_data.get('code')} - {subtitle_data.get('message')}")
+            return ""
+
+        subtitles_list = subtitle_data.get('data', {}).get('subtitle', {}).get('subtitles', [])
+        # 查找用户上传的字幕
+        user_subtitle = next((s for s in subtitles_list if s.get('ai_type') == 0 and s.get('subtitle_url')), None)
+
+        if not user_subtitle:
+            return ""
+
+        # 下载字幕内容
+        subtitle_url = user_subtitle.get('subtitle_url')
+        if subtitle_url.startswith('//'):
+            subtitle_url = 'https:' + subtitle_url
+
+        subtitle_response = get_bilibili_response(subtitle_url)
+        if not subtitle_response:
+            return ""
+
+        subtitle_content = subtitle_response.json()
+
+        # 转换为WebVTT格式并保存
+        with open(subtitle_path, 'w', encoding='utf-8') as f:
+            f.write("WEBVTT\n\n")
+            for line in subtitle_content.get('body', []):
+                start_time = format_webvtt_time(line.get('from', 0))
+                end_time = format_webvtt_time(line.get('to', 0))
+                content = line.get('content', '')
+                f.write(f"{start_time} --> {end_time}\n{content}\n\n")
+
+        return f"/subtitles/{subtitle_filename}"
+
+    except Exception as e:
+        print(f"下载字幕失败: {e}")
+        return ""
+
+def format_webvtt_time(seconds):
+    """将秒数转换为WebVTT时间格式"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
 
 def download_and_merge(bvid: str, p_info: dict, target_dir: Path):
     """Downloads and merges a single video part."""
@@ -281,7 +483,8 @@ async def list_videos_in_folder(folder_name: str):
                 "title": part['part'],
                 "page": part['page'],
                 "cover_url": cover_path,
-                "duration": part.get('duration', 0)
+                "duration": part.get('duration', 0),
+                "cid": part['cid']
             })
         video_parts = enhanced_parts
 
@@ -289,7 +492,7 @@ async def list_videos_in_folder(folder_name: str):
 
 
 @app.get("/api/play/{folder_name}/{page_number}")
-async def play_video(folder_name: str, page_number: int, background_tasks: BackgroundTasks):
+async def play_video(folder_name: str, page_number: int):
     """
     Ensures a video is downloaded and returns its static file path.
     If the video doesn't exist, it's downloaded in the background.
@@ -327,16 +530,32 @@ async def play_video(folder_name: str, page_number: int, background_tasks: Backg
     clean_name = re.sub(r'[\\/*?:"<>|]', "", target_part['part'])
     final_video_path = folder_path / f"{clean_name}.mp4"
 
+    # 检查字幕可用性和获取字幕
+    has_subtitle = await check_subtitle_availability(bvid, page_number, target_part['cid'])
+    subtitle_url = ""
+    if has_subtitle:
+        subtitle_url = await download_and_cache_subtitle(bvid, page_number, target_part['cid'])
+
     # If file exists, return its path immediately.
     if final_video_path.exists():
-        return {"status": "ready", "video_url": f"/static/{folder_name}/{final_video_path.name}"}
+        return {
+            "status": "ready",
+            "video_url": f"/static/{folder_name}/{final_video_path.name}",
+            "has_subtitle": has_subtitle,
+            "subtitle_url": subtitle_url
+        }
 
     # If file does not exist, start download and return a "pending" status.
     # The frontend will need to poll or wait.
     try:
         # Using a synchronous function in a thread pool
         await asyncio.to_thread(download_and_merge, bvid, target_part, folder_path)
-        return {"status": "ready", "video_url": f"/static/{folder_name}/{final_video_path.name}"}
+        return {
+            "status": "ready",
+            "video_url": f"/static/{folder_name}/{final_video_path.name}",
+            "has_subtitle": has_subtitle,
+            "subtitle_url": subtitle_url
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to download video: {str(e)}")
 
@@ -356,6 +575,59 @@ async def serve_cover_image(file_name: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Cover image not found.")
     return FileResponse(file_path)
+
+@app.get("/subtitles/{file_name}")
+async def serve_subtitle_file(file_name: str):
+    """Serves the subtitle files statically."""
+    file_path = SUBTITLES_DIR / file_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Subtitle file not found.")
+    return FileResponse(file_path, media_type="text/vtt")
+
+@app.get("/api/subtitle/{folder_name}/{page_number}")
+async def get_subtitle(folder_name: str, page_number: int):
+    """获取指定视频的字幕文件"""
+    folder_path = VIDEOS_DIR / folder_name
+    list_file = folder_path / "list.txt"
+
+    if not list_file.exists():
+        raise HTTPException(status_code=404, detail=f"'list.txt' not found in folder '{folder_name}'")
+
+    with open(list_file, 'r', encoding='utf-8') as f:
+        bvid_lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+
+    if not bvid_lines:
+        raise HTTPException(status_code=404, detail="'list.txt' is empty.")
+
+    try:
+        bvid = extract_bvid_from_url(bvid_lines[0])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # 获取视频分P信息
+    video_parts = get_video_parts_with_covers(bvid)
+    if not video_parts:
+        video_parts = get_video_parts(bvid)
+        if not video_parts:
+            raise HTTPException(status_code=500, detail="Could not fetch video parts.")
+
+    # 找到对应的分P
+    target_part = None
+    for part in video_parts:
+        if part['page'] == page_number:
+            target_part = part
+            break
+
+    if not target_part:
+        raise HTTPException(status_code=404, detail=f"Page number {page_number} not found.")
+
+    # 下载并缓存字幕
+    subtitle_path = await download_and_cache_subtitle(bvid, page_number, target_part['cid'])
+
+    if not subtitle_path:
+        raise HTTPException(status_code=404, detail="No subtitle available for this video.")
+
+    return {"subtitle_url": subtitle_path}
 
 # --- Frontend Routes ---
 @app.get("/", response_class=HTMLResponse)

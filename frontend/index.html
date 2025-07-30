@@ -36,9 +36,16 @@
     <!-- 文件夹列表页面 -->
     <div id="folders-screen" class="screen hidden">
         <header class="app-header">
-            <h1>📁 选择文件夹</h1>
+            <button id="back-to-parent" class="back-btn hidden">← 返回</button>
+            <h1 id="folders-title">📁 选择文件夹</h1>
         </header>
         <main class="content">
+            <!-- 面包屑导航 -->
+            <nav id="breadcrumb" class="breadcrumb hidden">
+                <div class="breadcrumb-items">
+                    <!-- 面包屑项目将动态加载 -->
+                </div>
+            </nav>
             <div id="folders-list" class="folders-grid">
                 <!-- 文件夹将动态加载 -->
             </div>

@@ -6,6 +6,8 @@ class VideoPlayerApp {
         this.currentVideo = null;
         this.apiBase = window.location.origin;
         this.subtitleEnabled = false;
+        this.currentPath = [];  // 当前路径栈 ['folder1', 'subfolder1']
+        this.folderHistory = []; // 导航历史
         
         this.init();
     }
@@ -33,6 +35,11 @@ class VideoPlayerApp {
             this.showScreen('videos');
         });
 
+        // 返回上级文件夹按钮
+        document.getElementById('back-to-parent').addEventListener('click', () => {
+            this.navigateToParent();
+        });
+
         // 字幕开关按钮
         document.getElementById('subtitle-toggle').addEventListener('click', () => {
             this.toggleSubtitle();
@@ -40,6 +47,11 @@ class VideoPlayerApp {
     }
 
     showScreen(screenName) {
+        // 如果正在离开播放器屏幕，停止视频播放
+        if (this.currentScreen === 'player' && screenName !== 'player') {
+            this.stopVideo();
+        }
+        
         // 隐藏所有屏幕
         document.querySelectorAll('.screen').forEach(screen => {
             screen.classList.add('hidden');
@@ -53,12 +65,18 @@ class VideoPlayerApp {
         }
     }
 
-    async loadFolders() {
+    async loadFolders(path = '') {
         try {
-            const response = await fetch(`${this.apiBase}/api/folders`);
+            const url = path ? `${this.apiBase}/api/folders?path=${encodeURIComponent(path)}` : `${this.apiBase}/api/folders`;
+            const response = await fetch(url);
             const folders = await response.json();
             
+            // 更新当前路径
+            this.currentPath = path ? path.split('/') : [];
+            
             this.renderFolders(folders);
+            this.updateBreadcrumb();
+            this.updateBackButton();
             this.showScreen('folders');
         } catch (error) {
             this.showError('加载文件夹失败');
@@ -86,14 +104,27 @@ class VideoPlayerApp {
             folderElement.style.animationDelay = `${index * 0.15}s`;
             folderElement.setAttribute('tabindex', '0'); // 键盘可访问性
 
+            const folderName = typeof folder === 'string' ? folder : folder.name;
+            const hasVideos = typeof folder === 'object' && folder.has_list_file;
+            const folderIcon = '📁'; // 统一使用文件夹图标
+
             folderElement.innerHTML = `
-                <span class="folder-icon">📁</span>
-                <div class="folder-name">${folder}</div>
+                <span class="folder-icon">${folderIcon}</span>
+                <div class="folder-name">${folderName}</div>
             `;
 
             // 点击和键盘事件
             const handleActivation = () => {
-                this.loadVideos(folder);
+                if (typeof folder === 'string') {
+                    // 兼容旧格式（字符串）
+                    this.loadVideos(folder);
+                } else if (folder.has_list_file) {
+                    // 有list.txt文件，进入视频列表
+                    this.loadVideos(folder.path);
+                } else {
+                    // 纯文件夹，继续浏览子文件夹
+                    this.loadFolders(folder.path);
+                }
             };
 
             folderElement.addEventListener('click', handleActivation);
@@ -108,12 +139,77 @@ class VideoPlayerApp {
         });
     }
 
-    async loadVideos(folderName) {
+    updateBreadcrumb() {
+        const breadcrumb = document.getElementById('breadcrumb');
+        const breadcrumbItems = breadcrumb.querySelector('.breadcrumb-items');
+        
+        if (this.currentPath.length === 0) {
+            breadcrumb.classList.add('hidden');
+            return;
+        }
+        
+        breadcrumb.classList.remove('hidden');
+        breadcrumbItems.innerHTML = '';
+        
+        // 添加根目录
+        const homeItem = document.createElement('span');
+        homeItem.className = 'breadcrumb-item';
+        homeItem.textContent = '🏠 首页';
+        homeItem.addEventListener('click', () => this.loadFolders(''));
+        breadcrumbItems.appendChild(homeItem);
+        
+        // 添加路径项
+        this.currentPath.forEach((pathPart, index) => {
+            // 添加分隔符
+            const separator = document.createElement('span');
+            separator.className = 'breadcrumb-separator';
+            separator.textContent = '>';
+            breadcrumbItems.appendChild(separator);
+            
+            // 添加路径项
+            const pathItem = document.createElement('span');
+            pathItem.className = 'breadcrumb-item';
+            if (index === this.currentPath.length - 1) {
+                pathItem.classList.add('current');
+            }
+            pathItem.textContent = pathPart;
+            
+            if (index < this.currentPath.length - 1) {
+                const targetPath = this.currentPath.slice(0, index + 1).join('/');
+                pathItem.addEventListener('click', () => this.loadFolders(targetPath));
+            }
+            
+            breadcrumbItems.appendChild(pathItem);
+        });
+    }
+    
+    updateBackButton() {
+        const backButton = document.getElementById('back-to-parent');
+        const foldersTitle = document.getElementById('folders-title');
+        
+        if (this.currentPath.length > 0) {
+            backButton.classList.remove('hidden');
+            foldersTitle.textContent = `📁 ${this.currentPath[this.currentPath.length - 1]}`;
+        } else {
+            backButton.classList.add('hidden');
+            foldersTitle.textContent = '📁 选择文件夹';
+        }
+    }
+    
+    navigateToParent() {
+        if (this.currentPath.length > 0) {
+            const parentPath = this.currentPath.slice(0, -1).join('/');
+            this.loadFolders(parentPath);
+        }
+    }
+
+    async loadVideos(folderPath) {
         try {
-            this.currentFolder = folderName;
+            this.currentFolder = folderPath;
+            const folderName = folderPath.split('/').pop() || folderPath;
             document.getElementById('folder-title').textContent = `📺 ${folderName}`;
             
-            const response = await fetch(`${this.apiBase}/api/folders/${encodeURIComponent(folderName)}`);
+            const response = await fetch(`${this.apiBase}/api/folders/${encodeURIComponent(folderPath)}`);
             
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
@@ -290,6 +386,17 @@ class VideoPlayerApp {
         const subtitleToggle = document.getElementById('subtitle-toggle');
         subtitleToggle.disabled = true;
         subtitleToggle.classList.remove('active');
+    }
+
+    stopVideo() {
+        const videoPlayer = document.getElementById('video-player');
+        
+        // 暂停视频播放
+        if (videoPlayer) {
+            videoPlayer.pause();
+            // 将播放时间重置到开始位置
+            videoPlayer.currentTime = 0;
+        }
     }
 
     loadVideoPlayer(videoUrl) {

@@ -687,24 +687,100 @@ def download_and_merge(bvid: str, p_info: dict, target_dir: Path):
 
 # --- API Endpoints ---
 
+def scan_folders_recursive(base_path: Path, current_path: Path = None, depth: int = 0, max_depth: int = 10) -> List[dict]:
+    """递归扫描文件夹结构"""
+    if current_path is None:
+        current_path = base_path
+    
+    if depth > max_depth:
+        return []
+    
+    folders = []
+    
+    try:
+        for item in current_path.iterdir():
+            if item.is_dir():
+                # 计算相对路径
+                relative_path = str(item.relative_to(base_path))
+                parent_path = str(current_path.relative_to(base_path)) if current_path != base_path else ""
+                
+                # 检查是否有list.txt文件
+                list_file = item / "list.txt"
+                has_list_file = list_file.exists()
+                
+                # 递归扫描子文件夹
+                children = scan_folders_recursive(base_path, item, depth + 1, max_depth)
+                
+                folder_info = {
+                    "name": item.name,
+                    "path": relative_path,
+                    "parent_path": parent_path if parent_path else None,
+                    "children": children,
+                    "has_list_file": has_list_file,
+                    "video_count": 0,
+                    "downloaded_count": 0,
+                    "depth": depth,
+                    "is_folder": True
+                }
+                
+                folders.append(folder_info)
+    except PermissionError:
+        pass
+    
+    return folders
+
 @app.get("/api/folders")
-async def list_folders():
-    """Lists all top-level folders within the VIDEOS_DIR."""
+async def list_folders(path: str = ""):
+    """获取文件夹列表，支持嵌套路径"""
     if not VIDEOS_DIR.is_dir():
         return []
-    return [d.name for d in VIDEOS_DIR.iterdir() if d.is_dir()]
+    
+    # 如果指定了路径，则从该路径开始扫描
+    if path:
+        target_path = VIDEOS_DIR / path
+        if not target_path.exists() or not target_path.is_dir():
+            raise HTTPException(status_code=404, detail=f"Folder not found: {path}")
+        
+        # 只返回指定路径下的直接子文件夹
+        folders = []
+        try:
+            for item in target_path.iterdir():
+                if item.is_dir():
+                    relative_path = str(item.relative_to(VIDEOS_DIR))
+                    list_file = item / "list.txt"
+                    has_list_file = list_file.exists()
+                    
+                    folder_info = {
+                        "name": item.name,
+                        "path": relative_path,
+                        "parent_path": path,
+                        "children": [],
+                        "has_list_file": has_list_file,
+                        "video_count": 0,
+                        "downloaded_count": 0,
+                        "depth": len(path.split('/')) if path else 0,
+                        "is_folder": True
+                    }
+                    folders.append(folder_info)
+        except PermissionError:
+            pass
+        
+        return folders
+    else:
+        # 返回顶级文件夹
+        return scan_folders_recursive(VIDEOS_DIR, depth=0, max_depth=0)
 
-@app.get("/api/folders/{folder_name}")
-async def list_videos_in_folder(folder_name: str):
+@app.get("/api/folders/{folder_path:path}")
+async def list_videos_in_folder(folder_path: str):
     """
     快速返回视频列表基本信息，实现分阶段加载
     第一阶段：立即返回基本信息（标题、分P数量）
     """
-    folder_path = VIDEOS_DIR / folder_name
-    list_file = folder_path / "list.txt"
+    target_folder = VIDEOS_DIR / folder_path
+    list_file = target_folder / "list.txt"
 
     if not list_file.exists():
-        raise HTTPException(status_code=404, detail=f"'list.txt' not found in folder '{folder_name}'")
+        raise HTTPException(status_code=404, detail=f"'list.txt' not found in folder '{folder_path}'")
 
     with open(list_file, 'r', encoding='utf-8') as f:
         bvid_lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
@@ -737,16 +813,16 @@ async def list_videos_in_folder(folder_name: str):
 
     return enhanced_parts
 
-@app.get("/api/folders/{folder_name}/details")
-async def get_videos_details(folder_name: str):
+@app.get("/api/folders/{folder_path:path}/details")
+async def get_videos_details(folder_path: str):
     """
     第二阶段：获取视频详细信息（封面、字幕状态等）
     """
-    folder_path = VIDEOS_DIR / folder_name
-    list_file = folder_path / "list.txt"
+    target_folder = VIDEOS_DIR / folder_path
+    list_file = target_folder / "list.txt"
 
     if not list_file.exists():
-        raise HTTPException(status_code=404, detail=f"'list.txt' not found in folder '{folder_name}'")
+        raise HTTPException(status_code=404, detail=f"'list.txt' not found in folder '{folder_path}'")
 
     with open(list_file, 'r', encoding='utf-8') as f:
         bvid_lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
@@ -911,16 +987,16 @@ async def preload_covers(request_data: dict):
         return {"status": "error", "message": str(e)}
 
 
-@app.get("/api/play/{folder_name}/{page_number}")
-async def play_video(folder_name: str, page_number: int):
+@app.get("/api/play/{folder_path:path}/{page_number}")
+async def play_video(folder_path: str, page_number: int):
     """
     播放视频，包含字幕检查（恢复原有功能）
     """
-    folder_path = VIDEOS_DIR / folder_name
-    list_file = folder_path / "list.txt"
+    target_folder = VIDEOS_DIR / folder_path
+    list_file = target_folder / "list.txt"
 
     if not list_file.exists():
-        raise HTTPException(status_code=404, detail=f"'list.txt' not found in folder '{folder_name}'")
+        raise HTTPException(status_code=404, detail=f"'list.txt' not found in folder '{folder_path}'")
 
     with open(list_file, 'r', encoding='utf-8') as f:
         bvid_lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
@@ -948,7 +1024,7 @@ async def play_video(folder_name: str, page_number: int):
         raise HTTPException(status_code=404, detail=f"Page number {page_number} not found for this BV ID.")
 
     clean_name = re.sub(r'[\\/*?:"<>|]', "", target_part['part'])
-    final_video_path = folder_path / f"{clean_name}.mp4"
+    final_video_path = target_folder / f"{clean_name}.mp4"
 
     # 检查字幕可用性和获取字幕（恢复原有功能）
     has_subtitle = await check_subtitle_availability(bvid, page_number, target_part['cid'])
@@ -960,7 +1036,7 @@ async def play_video(folder_name: str, page_number: int):
     if final_video_path.exists():
         return {
             "status": "ready",
-            "video_url": f"/static/{folder_name}/{final_video_path.name}",
+            "video_url": f"/static/{folder_path}/{final_video_path.name}",
             "has_subtitle": has_subtitle,
             "subtitle_url": subtitle_url
         }
@@ -968,10 +1044,10 @@ async def play_video(folder_name: str, page_number: int):
     # If file does not exist, start download and return a "pending" status.
     try:
         # 使用异步线程池下载
-        await asyncio.to_thread(download_and_merge, bvid, target_part, folder_path)
+        await asyncio.to_thread(download_and_merge, bvid, target_part, target_folder)
         return {
             "status": "ready",
-            "video_url": f"/static/{folder_name}/{final_video_path.name}",
+            "video_url": f"/static/{folder_path}/{final_video_path.name}",
             "has_subtitle": has_subtitle,
             "subtitle_url": subtitle_url
         }
@@ -981,10 +1057,10 @@ async def play_video(folder_name: str, page_number: int):
 
 
 
-@app.get("/static/{folder_name}/{file_name}")
-async def serve_static_video(folder_name: str, file_name: str):
+@app.get("/static/{folder_path:path}/{file_name}")
+async def serve_static_video(folder_path: str, file_name: str):
     """Serves the video files statically."""
-    file_path = VIDEOS_DIR / folder_name / file_name
+    file_path = VIDEOS_DIR / folder_path / file_name
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found.")
     return FileResponse(file_path)
@@ -1005,14 +1081,14 @@ async def serve_subtitle_file(file_name: str):
         raise HTTPException(status_code=404, detail="Subtitle file not found.")
     return FileResponse(file_path, media_type="text/vtt")
 
-@app.get("/api/subtitle/{folder_name}/{page_number}")
-async def get_subtitle(folder_name: str, page_number: int):
+@app.get("/api/subtitle/{folder_path:path}/{page_number}")
+async def get_subtitle(folder_path: str, page_number: int):
     """获取指定视频的字幕文件"""
-    folder_path = VIDEOS_DIR / folder_name
-    list_file = folder_path / "list.txt"
+    target_folder = VIDEOS_DIR / folder_path
+    list_file = target_folder / "list.txt"
 
     if not list_file.exists():
-        raise HTTPException(status_code=404, detail=f"'list.txt' not found in folder '{folder_name}'")
+        raise HTTPException(status_code=404, detail=f"'list.txt' not found in folder '{folder_path}'")
 
     with open(list_file, 'r', encoding='utf-8') as f:
         bvid_lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]

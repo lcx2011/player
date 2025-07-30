@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, ForwardRef
 from datetime import datetime
 
 class VideoInfo(BaseModel):
@@ -13,13 +13,23 @@ class VideoInfo(BaseModel):
     file_size: Optional[int] = None
     upload_date: Optional[str] = None
 
+# 前向引用，用于递归结构
+FolderInfoRef = ForwardRef('FolderInfo')
+
 class FolderInfo(BaseModel):
     """文件夹信息模型"""
     name: str
     path: str
+    parent_path: Optional[str] = None
+    children: List[FolderInfoRef] = []
     has_list_file: bool
     video_count: int = 0
     downloaded_count: int = 0
+    depth: int = 0
+    is_folder: bool = True
+
+# 更新前向引用
+FolderInfo.model_rebuild()
 
 class DownloadStatus(BaseModel):
     """下载状态模型"""

@@ -232,6 +232,55 @@ body {
     min-height: calc(100vh - 80px);
 }
 
+/* 面包屑导航 */
+.breadcrumb {
+    margin: var(--space-lg) 0;
+    padding: var(--space-md);
+    background: var(--white);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+}
+
+.breadcrumb-items {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+}
+
+.breadcrumb-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    color: var(--gray-600);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+}
+
+.breadcrumb-item:hover {
+    background: var(--gray-100);
+    color: var(--coral-red);
+}
+
+.breadcrumb-item.current {
+    color: var(--coral-red);
+    font-weight: 600;
+    cursor: default;
+}
+
+.breadcrumb-item.current:hover {
+    background: transparent;
+}
+
+.breadcrumb-separator {
+    color: var(--gray-300);
+    font-size: var(--text-sm);
+    margin: 0 var(--space-xs);
+}
+
 /* 文件夹网格 */
 .folders-grid {
     display: grid;

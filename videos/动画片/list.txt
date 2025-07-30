@@ -1,3 +1,0 @@
-# 动画片视频列表
-# 每行一个B站视频链接
-https://www.bilibili.com/video/BV13hKnz5Eoq

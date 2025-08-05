@@ -4,10 +4,11 @@ import subprocess
 import requests
 import json
 import time
+import locale
 from functools import reduce
 from hashlib import md5
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -35,6 +36,19 @@ SUBTITLES_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="Video Player Backend")
 
+# 设置locale以支持中文排序
+try:
+    locale.setlocale(locale.LC_COLLATE, 'zh_CN.UTF-8')
+except locale.Error:
+    try:
+        locale.setlocale(locale.LC_COLLATE, 'Chinese (Simplified)_China.936')
+    except locale.Error:
+        try:
+            locale.setlocale(locale.LC_COLLATE, 'zh_CN')
+        except locale.Error:
+            # 如果都失败了，使用默认排序
+            pass
+
 # 挂载前端静态文件服务
 app.mount("/frontend", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
 
@@ -48,40 +62,38 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+# 中文友好的排序函数
+def chinese_sort_key(text: str) -> str:
+    """生成中文友好的排序键"""
+    import unicodedata
+    # 将中文字符转换为拼音或者使用Unicode序号
+    normalized = unicodedata.normalize('NFKD', text)
+    # 简单的排序策略：数字优先，然后是字母，最后是中文
+    result = []
+    for char in normalized:
+        if char.isdigit():
+            result.append(('0', char))  # 数字排在最前
+        elif char.isascii() and char.isalpha():
+            result.append(('1', char.lower()))  # 字母排在中间
+        else:
+            result.append(('2', char))  # 中文等其他字符排在最后
+    return result
+
+def sort_folders_chinese(folders: List[dict]) -> List[dict]:
+    """按中文友好的方式排序文件夹"""
+    try:
+        # 尝试使用locale排序
+        return sorted(folders, key=lambda x: locale.strxfrm(x['name']))
+    except (AttributeError, TypeError):
+        # 如果locale排序失败，使用自定义排序
+        return sorted(folders, key=lambda x: chinese_sort_key(x['name']))
+
 # --- Bilibili Downloader Logic (Adapted from 1.py) ---
 
 HEADERS = {
     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36',
     'referer': 'https://www.bilibili.com/'
 }
-
-# 全局异步HTTP客户端
-_http_session: Optional[aiohttp.ClientSession] = None
-
-# 内存缓存
-_video_parts_cache: Dict[str, Any] = {}
-_wbi_key_cache: Optional[str] = None
-_wbi_key_cache_time: float = 0
-
-async def get_http_session() -> aiohttp.ClientSession:
-    """获取全局HTTP会话"""
-    global _http_session
-    if _http_session is None or _http_session.closed:
-        timeout = aiohttp.ClientTimeout(total=15)
-        connector = aiohttp.TCPConnector(ssl=False)  # 禁用SSL验证
-        _http_session = aiohttp.ClientSession(
-            headers=HEADERS,
-            timeout=timeout,
-            connector=connector
-        )
-    return _http_session
-
-async def close_http_session():
-    """关闭HTTP会话"""
-    global _http_session
-    if _http_session and not _http_session.closed:
-        await _http_session.close()
-        _http_session = None
 
 # 全局异步HTTP客户端
 _http_session: Optional[aiohttp.ClientSession] = None
@@ -727,13 +739,14 @@ def scan_folders_recursive(base_path: Path, current_path: Path = None, depth: in
     except PermissionError:
         pass
     
-    return folders
+    # 对文件夹进行中文友好排序
+    return sort_folders_chinese(folders)
 
 @app.get("/api/folders")
 async def list_folders(path: str = ""):
     """获取文件夹列表，支持嵌套路径"""
     if not VIDEOS_DIR.is_dir():
-        return []
+        return JSONResponse(content=[], headers={"Content-Type": "application/json; charset=utf-8"})
     
     # 如果指定了路径，则从该路径开始扫描
     if path:
@@ -765,10 +778,14 @@ async def list_folders(path: str = ""):
         except PermissionError:
             pass
         
-        return folders
+        # 对文件夹进行中文友好排序
+        sorted_folders = sort_folders_chinese(folders)
+        return JSONResponse(content=sorted_folders, headers={"Content-Type": "application/json; charset=utf-8"})
     else:
         # 返回顶级文件夹
-        return scan_folders_recursive(VIDEOS_DIR, depth=0, max_depth=0)
+        folders = scan_folders_recursive(VIDEOS_DIR, depth=0, max_depth=0)
+        sorted_folders = sort_folders_chinese(folders)
+        return JSONResponse(content=sorted_folders, headers={"Content-Type": "application/json; charset=utf-8"})
 
 @app.get("/api/folders/{folder_path:path}")
 async def list_videos_in_folder(folder_path: str):
@@ -811,7 +828,7 @@ async def list_videos_in_folder(folder_path: str):
             "has_subtitle": None  # 稍后异步检查
         })
 
-    return enhanced_parts
+    return JSONResponse(content=enhanced_parts, headers={"Content-Type": "application/json; charset=utf-8"})
 
 @app.get("/api/folders/{folder_path:path}/details")
 async def get_videos_details(folder_path: str):
@@ -853,7 +870,7 @@ async def get_videos_details(folder_path: str):
             "has_subtitle": has_subtitle
         })
 
-    return detailed_parts
+    return JSONResponse(content=detailed_parts, headers={"Content-Type": "application/json; charset=utf-8"})
 
 @app.get("/api/batch/covers/{bvid}")
 async def get_batch_covers(bvid: str, pages: str):
@@ -894,11 +911,11 @@ async def get_batch_covers(bvid: str, pages: str):
                     if downloaded_url:
                         covers[str(page_num)] = downloaded_url
 
-        return {"covers": covers}
+        return JSONResponse(content={"covers": covers}, headers={"Content-Type": "application/json; charset=utf-8"})
 
     except Exception as e:
         print(f"批量获取封面失败: {e}")
-        return {"covers": {}}
+        return JSONResponse(content={"covers": {}}, headers={"Content-Type": "application/json; charset=utf-8"})
 
 
 
@@ -911,12 +928,12 @@ async def get_video_cover(bvid: str, page_number: int):
         cover_path = COVERS_DIR / cover_filename
 
         if cover_path.exists():
-            return {"cover_url": f"/covers/{cover_filename}", "cached": True}
+            return JSONResponse(content={"cover_url": f"/covers/{cover_filename}", "cached": True}, headers={"Content-Type": "application/json; charset=utf-8"})
 
         # 使用异步函数获取视频信息
         video_parts = await get_video_parts_with_covers_async(bvid)
         if not video_parts:
-            return {"cover_url": "", "cached": False}
+            return JSONResponse(content={"cover_url": "", "cached": False}, headers={"Content-Type": "application/json; charset=utf-8"})
 
         # 找到对应的分P
         target_part = None
@@ -926,15 +943,15 @@ async def get_video_cover(bvid: str, page_number: int):
                 break
 
         if not target_part or not target_part.get('cover_url'):
-            return {"cover_url": "", "cached": False}
+            return JSONResponse(content={"cover_url": "", "cached": False}, headers={"Content-Type": "application/json; charset=utf-8"})
 
         # 下载并缓存封面
         cover_url = await download_and_cache_cover_async(bvid, page_number, target_part['cover_url'])
-        return {"cover_url": cover_url, "cached": False}
+        return JSONResponse(content={"cover_url": cover_url, "cached": False}, headers={"Content-Type": "application/json; charset=utf-8"})
 
     except Exception as e:
         print(f"获取封面失败: {e}")
-        return {"cover_url": "", "cached": False}
+        return JSONResponse(content={"cover_url": "", "cached": False}, headers={"Content-Type": "application/json; charset=utf-8"})
 
 @app.post("/api/covers/preload")
 async def preload_covers(request_data: dict):

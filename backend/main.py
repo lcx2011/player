@@ -208,31 +208,31 @@ def convert_seconds_to_lrc_time(seconds):
 def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', "", name)
 
-async def get_bilibili_response_async(url: str, params: Optional[Dict] = None) -> Optional[aiohttp.ClientResponse]:
-    """异步发送请求到B站API端点"""
-    try:
-        session = await get_http_session()
-        async with session.get(url, params=params) as response:
-            if response.status == 200:
-                return response
-            else:
+async def get_bilibili_response_async(url: str, params: Optional[Dict] = None, retries: int = 3) -> Optional[aiohttp.ClientResponse]:
+    """异步发送请求到B站API端点，支持重试"""
+    for attempt in range(retries):
+        try:
+            session = await get_http_session()
+            async with session.get(url, params=params) as response:
+                if response.status == 200:
+                    return response
                 print(f"HTTP {response.status}: {url}")
-                return None
-    except Exception as e:
-        print(f"异步请求失败: {e}")
-        return None
+        except Exception as e:
+            print(f"异步请求失败 (尝试 {attempt+1}/{retries}): {e}")
+    return None
 
-def get_bilibili_response(url, params=None):
-    """Sends a request to a Bilibili API endpoint."""
-    try:
-        # Disable SSL verification warnings
-        requests.packages.urllib3.disable_warnings()
-        response = requests.get(url, params=params, headers=HEADERS, timeout=15, verify=False)
-        response.raise_for_status()
-        return response
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed: {e}")
-        return None
+def get_bilibili_response(url, params=None, retries: int = 3):
+    """发送请求到B站API端点，支持重试"""
+    for attempt in range(retries):
+        try:
+            # Disable SSL verification warnings
+            requests.packages.urllib3.disable_warnings()
+            response = requests.get(url, params=params, headers=HEADERS, timeout=15, verify=False)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as e:
+            print(f"请求失败 (尝试 {attempt+1}/{retries}): {e}")
+    return None
 
 def extract_bvid_from_url(url_or_bvid: str) -> str:
     """Extract BV ID from Bilibili URL or return as-is if already a BV ID."""

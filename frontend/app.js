@@ -8,6 +8,7 @@ class VideoPlayerApp {
         this.subtitleEnabled = false;
         this.currentPath = [];  // 当前路径栈 ['folder1', 'subfolder1']
         this.folderHistory = []; // 导航历史
+        this.player = null; // Plyr播放器实例
         
         this.init();
     }
@@ -40,10 +41,7 @@ class VideoPlayerApp {
             this.navigateToParent();
         });
 
-        // 字幕开关按钮
-        document.getElementById('subtitle-toggle').addEventListener('click', () => {
-            this.toggleSubtitle();
-        });
+        // 字幕将由Plyr自动处理
     }
 
     showScreen(screenName) {
@@ -368,34 +366,34 @@ class VideoPlayerApp {
     }
 
     clearVideoPlayer() {
+        // 销毁现有的Plyr实例
+        if (this.player) {
+            this.player.destroy();
+            this.player = null;
+        }
+
         const videoPlayer = document.getElementById('video-player');
         const videoSource = document.getElementById('video-source');
         const subtitleTrack = document.getElementById('subtitle-track');
 
         // 暂停并清空当前视频
-        videoPlayer.pause();
-        videoSource.src = '';
-        subtitleTrack.src = '';
-        subtitleTrack.style.display = 'none';
-
-        // 重新加载播放器以清除缓存
-        videoPlayer.load();
+        if (videoPlayer) {
+            videoPlayer.pause();
+            videoSource.src = '';
+            subtitleTrack.src = '';
+            subtitleTrack.style.display = 'none';
+            videoPlayer.load();
+        }
 
         // 重置字幕状态
         this.subtitleEnabled = false;
-        const subtitleToggle = document.getElementById('subtitle-toggle');
-        subtitleToggle.disabled = true;
-        subtitleToggle.classList.remove('active');
     }
 
     stopVideo() {
-        const videoPlayer = document.getElementById('video-player');
-        
-        // 暂停视频播放
-        if (videoPlayer) {
-            videoPlayer.pause();
-            // 将播放时间重置到开始位置
-            videoPlayer.currentTime = 0;
+        // 使用Plyr API停止播放
+        if (this.player) {
+            this.player.pause();
+            this.player.currentTime = 0;
         }
     }
 
@@ -405,18 +403,12 @@ class VideoPlayerApp {
 
         // 设置新的视频源
         videoSource.src = `${this.apiBase}${videoUrl}`;
-
-        // 重新加载播放器
         videoPlayer.load();
 
-        this.hideDownloadProgress();
+        // 初始化Plyr播放器
+        this.initPlyrPlayer();
 
-        // 等待视频加载完成后自动播放
-        videoPlayer.addEventListener('loadeddata', () => {
-            videoPlayer.play().catch(e => {
-                console.log('自动播放被阻止，需要用户手动播放');
-            });
-        }, { once: true }); // 只执行一次
+        this.hideDownloadProgress();
     }
 
     showDownloadProgress() {
@@ -453,24 +445,18 @@ class VideoPlayerApp {
     }
 
     setupSubtitleButton(video) {
-        const subtitleToggle = document.getElementById('subtitle-toggle');
         const subtitleTrack = document.getElementById('subtitle-track');
 
         // 先重置字幕状态
-        subtitleToggle.classList.remove('active');
         this.subtitleEnabled = false;
         subtitleTrack.src = '';
         subtitleTrack.style.display = 'none';
 
         if (video.has_subtitle && video.subtitle_url) {
-            // 有字幕可用
-            subtitleToggle.disabled = false;
-
-            // 加载字幕
+            // 有字幕可用。加载字幕
             this.loadSubtitle(video.subtitle_url);
         } else {
-            // 无字幕可用
-            subtitleToggle.disabled = true;
+            console.log('无字幕可用');
         }
     }
 
@@ -485,7 +471,7 @@ class VideoPlayerApp {
 
             // 默认开启字幕
             this.subtitleEnabled = true;
-            document.getElementById('subtitle-toggle').classList.add('active');
+            console.log('字幕已加载，将在Plyr初始化时自动启用');
 
             // 等待视频和字幕都加载完成后启用字幕
             const enableSubtitle = () => {
@@ -506,24 +492,96 @@ class VideoPlayerApp {
         }
     }
 
-    toggleSubtitle() {
+    initPlyrPlayer() {
         const videoPlayer = document.getElementById('video-player');
-        const subtitleToggle = document.getElementById('subtitle-toggle');
+        
+        // Plyr配置选项
+        const plyrOptions = {
+            // 控制按钮配置：只显示播放、进度条、字幕和全屏
+            controls: [
+                'play', // 播放/暂停
+                'progress', // 进度条
+                'current-time', // 当前时间
+                'duration', // 总时长
+                'captions', // 字幕
+                'fullscreen' // 全屏
+            ],
+            // 不显示设置菜单
+            settings: [],
+            // 字幕配置
+            captions: {
+                active: true, // 默认开启字幕（如果有的话）
+                language: 'auto',
+                update: true
+            },
+            // 其他配置
+            clickToPlay: true,
+            hideControls: true,
+            resetOnEnd: false,
+            keyboard: { focused: true, global: false },
+            tooltips: { controls: false, seek: true },
+            displayDuration: true,
+            invertTime: true,
+            toggleInvert: true
+        };
 
-        if (subtitleToggle.disabled) return;
+        // 创建Plyr实例
+        this.player = new Plyr(videoPlayer, plyrOptions);
 
-        this.subtitleEnabled = !this.subtitleEnabled;
-
-        if (this.subtitleEnabled) {
-            subtitleToggle.classList.add('active');
-            if (videoPlayer.textTracks.length > 0) {
-                videoPlayer.textTracks[0].mode = 'showing';
+        // 监听Plyr事件
+        this.player.on('ready', () => {
+            console.log('Plyr播放器已就绪');
+            // 如果有字幕且默认开启，则启用字幕
+            if (this.subtitleEnabled && this.player.captions && this.player.captions.tracks.length > 0) {
+                this.player.captions.active = true;
             }
-        } else {
-            subtitleToggle.classList.remove('active');
-            if (videoPlayer.textTracks.length > 0) {
-                videoPlayer.textTracks[0].mode = 'hidden';
-            }
+            // 尝试自动播放
+            this.player.play().catch(e => {
+                console.log('自动播放被阻止，需要用户手动播放');
+            });
+        });
+
+        this.player.on('play', () => {
+            console.log('开始播放');
+        });
+
+        this.player.on('pause', () => {
+            console.log('暂停播放');
+        });
+
+        // 播放错误处理
+        this.player.on('error', (event) => {
+            console.error('播放器错误:', event);
+            this.showError('视频播放失败，请检查网络连接或重试');
+        });
+
+        // 视频加载错误处理
+        this.player.media.addEventListener('error', (e) => {
+            console.error('视频加载错误:', e);
+            this.showError('视频文件加载失败');
+        });
+
+        // 检测视频是否可以播放
+        this.player.on('canplay', () => {
+            console.log('视频可以播放');
+        });
+
+        // 字幕事件监听
+        this.player.on('captionsenabled', () => {
+            this.subtitleEnabled = true;
+            console.log('字幕已启用');
+        });
+
+        this.player.on('captionsdisabled', () => {
+            this.subtitleEnabled = false;
+            console.log('字幕已禁用');
+        });
+    }
+
+    toggleSubtitle() {
+        // 使用Plyr API控制字幕
+        if (this.player && this.player.captions) {
+            this.player.captions.toggle();
         }
     }
 

@@ -5,6 +5,18 @@
     --mint-green: #4ECDC4;
     --sunshine-yellow: #FFE66D;
 
+    /* Plyr播放器色彩配置 */
+    --plyr-color-main: #FF6B6B;
+    --plyr-video-control-color: #ffffff;
+    --plyr-video-control-color-hover: #ffffff;
+    --plyr-video-control-background-hover: #FF6B6B;
+    --plyr-focus-visible-color: #FF6B6B;
+    --plyr-range-fill-background: #FF6B6B;
+    --plyr-control-radius: 8px;
+    --plyr-font-family: 'Microsoft YaHei', 'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
+    --plyr-font-size-base: 16px;
+    --plyr-font-size-small: 14px;
+
     /* 色彩变体 */
     --coral-light: #FF8E8E;
     --coral-dark: #FF4757;
@@ -918,5 +930,54 @@ button:focus,
     .folder-item,
     .video-item {
         animation: none;
+    }
+}
+
+/* Plyr播放器样式定制 */
+.plyr--video {
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.plyr__controls {
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.plyr__control {
+    font-family: var(--plyr-font-family);
+}
+
+.plyr__control--overlaid {
+    background: var(--plyr-color-main);
+    color: white;
+    border-radius: var(--radius-full);
+    width: 80px;
+    height: 80px;
+    box-shadow: var(--shadow-lg);
+    transition: all var(--transition-normal);
+}
+
+.plyr__control--overlaid:hover {
+    background: var(--coral-dark);
+    transform: scale(1.1);
+}
+
+.plyr__captions {
+    font-family: var(--plyr-font-family);
+    font-size: var(--plyr-font-size-base);
+    line-height: 1.4;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* 移动端Plyr优化 */
+@media (max-width: 768px) {
+    .plyr__control--overlaid {
+        width: 60px;
+        height: 60px;
+    }
+    
+    .plyr__captions {
+        font-size: var(--plyr-font-size-small);
     }
 }

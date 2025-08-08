@@ -78,3 +78,5 @@ logs/
 *.tmp
 *.temp
 video_list.txt
+todolist.txt
+plyr.md

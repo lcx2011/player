@@ -15,6 +15,8 @@ from pathlib import Path
 import asyncio
 import aiohttp
 from typing import Optional, Dict, List, Any
+import random
+import threading
 
 # 导入配置
 try:
@@ -102,6 +104,135 @@ _http_session: Optional[aiohttp.ClientSession] = None
 _video_parts_cache: Dict[str, Any] = {}
 _wbi_key_cache: Optional[str] = None
 _wbi_key_cache_time: float = 0
+
+# --- Outbound request limiting & backoff ---
+# 最大并发外呼数（根据实际情况微调）
+_MAX_CONCURRENT_OUTBOUND = int(os.getenv("OUTBOUND_MAX_CONCURRENCY", "3"))
+# 目标每秒请求数（全局），通过请求间隔实现（带抖动）
+_MAX_QPS = float(os.getenv("OUTBOUND_MAX_QPS", "2"))  # e.g. 2 req/s -> 500ms 基准间隔
+# 429/403 冷却秒数上限（指数退避中的最大冷却）
+_MAX_COOLDOWN_SECONDS = int(os.getenv("OUTBOUND_MAX_COOLDOWN", "300"))
+
+# 异步并发控制与时序控制
+_outbound_sem = asyncio.Semaphore(_MAX_CONCURRENT_OUTBOUND)
+_outbound_lock = asyncio.Lock()  # 保护时间间隔调度
+_next_earliest_ts = 0.0  # 单位：monotonic 秒
+
+# 同步代码路径（requests）用的锁与时序控制
+_sync_lock = threading.Lock()
+_sync_next_earliest_ts = 0.0
+
+# 针对特定端点的冷却窗口，key 可用为 URL 前缀
+_cooldowns: Dict[str, float] = {}
+
+def _endpoint_key(url: str) -> str:
+    # 简化：取主机+路径的前两段作为 key，避免过细颗粒度
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url)
+        parts = p.path.strip('/').split('/')
+        head = '/'.join(parts[:2]) if parts else ''
+        return f"{p.scheme}://{p.netloc}/{head}"
+    except Exception:
+        return url
+
+def _in_cooldown(url: str) -> bool:
+    now = time.monotonic()
+    key = _endpoint_key(url)
+    until = _cooldowns.get(key, 0.0)
+    return now < until
+
+def _set_cooldown(url: str, base_seconds: float) -> None:
+    # 叠加冷却到不超过最大上限
+    now = time.monotonic()
+    key = _endpoint_key(url)
+    current = _cooldowns.get(key, 0.0)
+    target = now + min(base_seconds, _MAX_COOLDOWN_SECONDS)
+    if target > current:
+        _cooldowns[key] = target
+
+def _jitter(seconds: float) -> float:
+    # 抖动：±20%
+    delta = seconds * 0.2
+    return max(0.0, seconds + random.uniform(-delta, delta))
+
+async def _await_global_qps_window():
+    global _next_earliest_ts
+    async with _outbound_lock:
+        now = time.monotonic()
+        min_gap = 1.0 / max(_MAX_QPS, 0.0001)
+        wait = max(0.0, _next_earliest_ts - now)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        # 设定下一次最早时间点（带抖动）
+        _next_earliest_ts = time.monotonic() + _jitter(min_gap)
+
+async def limited_get(url: str, params: Optional[Dict]=None, headers: Optional[Dict]=None, retries: int=3) -> Optional[aiohttp.ClientResponse]:
+    """带并发限制、QPS 间隔、退避与冷却的 GET（aiohttp）。返回已打开的响应对象或 None。"""
+    if _in_cooldown(url):
+        return None
+    session = await get_http_session()
+    last_exc: Optional[Exception] = None
+    backoff = 0.5  # 初始退避基准（秒）
+    for attempt in range(retries):
+        async with _outbound_sem:
+            await _await_global_qps_window()
+            try:
+                resp = await session.get(url, params=params, headers=headers)
+                if resp.status == 200:
+                    return resp
+                # 对 429/403：进入冷却并立即结束（避免 hammer）
+                if resp.status in (429, 403):
+                    # 以 60s * 2^attempt 递增，封顶 _MAX_COOLDOWN_SECONDS
+                    _set_cooldown(url, 60.0 * (2 ** attempt))
+                    await resp.release()
+                    return None
+                # 其它 5xx 可退避重试；4xx（非429/403）直接放弃
+                if 500 <= resp.status < 600:
+                    last_exc = Exception(f"HTTP {resp.status}")
+                else:
+                    await resp.release()
+                    return None
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                last_exc = e
+        # 退避等待（带抖动）
+        await asyncio.sleep(_jitter(backoff))
+        backoff = min(backoff * 2, 8.0)
+    return None
+
+def limited_get_sync(url: str, params: Optional[Dict]=None, headers: Optional[Dict]=None, timeout: int=15, retries: int=3):
+    """同步路径的受限 GET（requests），带并发间隔与退避。由于 GIL，我们仅实现 QPS 间隔与冷却，不做并发信号量。"""
+    if _in_cooldown(url):
+        return None
+    last_exc: Optional[Exception] = None
+    backoff = 0.5
+    for attempt in range(retries):
+        # 全局 QPS 控制（同步）
+        with _sync_lock:
+            global _sync_next_earliest_ts
+            now = time.monotonic()
+            min_gap = 1.0 / max(_MAX_QPS, 0.0001)
+            wait = max(0.0, _sync_next_earliest_ts - now)
+            if wait > 0:
+                time.sleep(wait)
+            _sync_next_earliest_ts = time.monotonic() + _jitter(min_gap)
+        try:
+            resp = requests.get(url, params=params, headers=headers or HEADERS, timeout=timeout)
+            status = resp.status_code
+            if status == 200:
+                return resp
+            if status in (429, 403):
+                _set_cooldown(url, 60.0 * (2 ** attempt))
+                return None
+            if 500 <= status < 600:
+                last_exc = Exception(f"HTTP {status}")
+            else:
+                return None
+        except requests.exceptions.RequestException as e:
+            last_exc = e
+        time.sleep(_jitter(backoff))
+        backoff = min(backoff * 2, 8.0)
+    return None
 
 async def get_http_session() -> aiohttp.ClientSession:
     """获取全局HTTP会话"""
@@ -209,30 +340,18 @@ def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', "", name)
 
 async def get_bilibili_response_async(url: str, params: Optional[Dict] = None, retries: int = 3) -> Optional[aiohttp.ClientResponse]:
-    """异步发送请求到B站API端点，支持重试"""
-    for attempt in range(retries):
-        try:
-            session = await get_http_session()
-            async with session.get(url, params=params) as response:
-                if response.status == 200:
-                    return response
-                print(f"HTTP {response.status}: {url}")
-        except Exception as e:
-            print(f"异步请求失败 (尝试 {attempt+1}/{retries}): {e}")
-    return None
+    """异步发送请求到B站API端点，支持重试、并发限制与退避。"""
+    resp = await limited_get(url, params=params, headers=None, retries=retries)
+    if not resp:
+        print(f"异步请求失败或被限流: {url}")
+    return resp
 
 def get_bilibili_response(url, params=None, retries: int = 3):
-    """发送请求到B站API端点，支持重试"""
-    for attempt in range(retries):
-        try:
-            # Disable SSL verification warnings
-            requests.packages.urllib3.disable_warnings()
-            response = requests.get(url, params=params, headers=HEADERS, timeout=15, verify=False)
-            response.raise_for_status()
-            return response
-        except requests.exceptions.RequestException as e:
-            print(f"请求失败 (尝试 {attempt+1}/{retries}): {e}")
-    return None
+    """发送请求到B站API端点（同步路径），带退避/QPS 间隔/冷却。"""
+    resp = limited_get_sync(url, params=params, headers=HEADERS, timeout=15, retries=retries)
+    if not resp:
+        print(f"请求失败或被限流: {url}")
+    return resp
 
 def extract_bvid_from_url(url_or_bvid: str) -> str:
     """Extract BV ID from Bilibili URL or return as-is if already a BV ID."""
@@ -248,21 +367,18 @@ def extract_bvid_from_url(url_or_bvid: str) -> str:
         return url_or_bvid
 
 async def get_video_parts_with_covers_async(bvid: str) -> Optional[List[Dict]]:
-    """异步获取视频分P信息和封面，带缓存"""
+    """异步获取视频分P信息和封面，带缓存与外呼限流"""
     # 检查缓存
     cache_key = f"parts_covers_{bvid}"
     if cache_key in _video_parts_cache:
         return _video_parts_cache[cache_key]
 
     try:
-        session = await get_http_session()
         url = f"https://www.bilibili.com/video/{bvid}"
-
-        async with session.get(url) as response:
-            if response.status != 200:
-                return None
-
-            html_content = await response.text()
+        response = await limited_get(url)
+        if not response:
+            return None
+        html_content = await response.text()
 
         # 提取JSON数据
         match = re.search(r'<script>window\.__INITIAL_STATE__=(.*?);\(function\(\)', html_content)
@@ -346,25 +462,24 @@ def get_video_parts_with_covers(bvid: str):
         return None
 
 async def get_video_parts_async(bvid: str) -> Optional[List[Dict]]:
-    """异步获取视频分P基本信息，带缓存"""
+    """异步获取视频分P基本信息，带缓存与外呼限流"""
     # 检查缓存
     cache_key = f"parts_{bvid}"
     if cache_key in _video_parts_cache:
         return _video_parts_cache[cache_key]
 
     try:
-        session = await get_http_session()
         url = 'https://api.bilibili.com/x/player/pagelist'
         params = {'bvid': bvid, 'jsonp': 'jsonp'}
 
-        async with session.get(url, params=params) as response:
-            if response.status == 200:
-                data = await response.json()
-                if data['code'] == 0:
-                    result = data['data']
-                    # 缓存结果
-                    _video_parts_cache[cache_key] = result
-                    return result
+        response = await limited_get(url, params=params)
+        if response and response.status == 200:
+            data = await response.json()
+            if data['code'] == 0:
+                result = data['data']
+                # 缓存结果
+                _video_parts_cache[cache_key] = result
+                return result
     except Exception as e:
         print(f"异步获取视频分P失败: {e}")
     return None
@@ -384,7 +499,7 @@ def get_video_parts(bvid: str):
     return None
 
 async def download_and_cache_cover_async(bvid: str, page: int, cover_url: str) -> str:
-    """异步下载并缓存封面图片，返回本地路径"""
+    """异步下载并缓存封面图片，返回本地路径（受限流管控）"""
     if not cover_url:
         return ""
 
@@ -401,13 +516,12 @@ async def download_and_cache_cover_async(bvid: str, page: int, cover_url: str) -
         return f"/covers/{cover_filename}"
 
     try:
-        session = await get_http_session()
-        async with session.get(cover_url) as response:
-            if response.status == 200:
-                content = await response.read()
-                with open(cover_path, 'wb') as f:
-                    f.write(content)
-                return f"/covers/{cover_filename}"
+        response = await limited_get(cover_url)
+        if response and response.status == 200:
+            content = await response.read()
+            with open(cover_path, 'wb') as f:
+                f.write(content)
+            return f"/covers/{cover_filename}"
     except Exception as e:
         print(f"异步下载封面失败: {e}")
 
@@ -507,7 +621,7 @@ async def check_subtitle_availability(bvid: str, page: int, cid: int) -> bool:
         headers = HEADERS.copy()
         headers['Cookie'] = BILIBILI_COOKIE
 
-        response = requests.get(player_api_url, params=signed_params, headers=headers)
+        response = limited_get_sync(player_api_url, params=signed_params, headers=headers)
 
         if not response:
             print("字幕API请求失败")
@@ -593,7 +707,7 @@ async def download_and_cache_subtitle(bvid: str, page: int, cid: int) -> str:
         if subtitle_url.startswith('//'):
             subtitle_url = 'https:' + subtitle_url
 
-        subtitle_response = get_bilibili_response(subtitle_url)
+        subtitle_response = limited_get_sync(subtitle_url, headers=HEADERS)
         if not subtitle_response:
             return ""
 

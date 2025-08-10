@@ -103,7 +103,7 @@ class VideoPlayerApp {
         folders.forEach((folder, index) => {
             const folderElement = document.createElement('div');
             folderElement.className = 'folder-item';
-            folderElement.style.animationDelay = `${index * 0.15}s`;
+            //folderElement.style.animationDelay = `${index * 0.15}s`;
             folderElement.setAttribute('tabindex', '0'); // 键盘可访问性
 
             const folderName = typeof folder === 'string' ? folder : folder.name;
@@ -212,7 +212,8 @@ class VideoPlayerApp {
         videos.forEach((video, index) => {
             const videoElement = document.createElement('div');
             videoElement.className = 'video-item';
-            videoElement.style.animationDelay = `${index * 0.12}s`;
+            // 移除动画延迟，让所有视频项一次性显示
+            // videoElement.style.animationDelay = `${index * 0.12}s`;
             videoElement.dataset.videoPage = video.page;
             videoElement.setAttribute('tabindex', '0'); // 键盘可访问性
 

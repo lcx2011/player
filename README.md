@@ -1,164 +1,119 @@
-# 🎬 儿童视频播放器
+# 儿童视频播放器（Bilibili）
 
-一个专为儿童设计的视频播放应用，支持B站视频下载和本地播放。
+一个包含后端（FastAPI）与前端（静态页面/PWA）的本地视频播放器工具：
+- 后端负责：目录扫描、分阶段加载分P信息、封面缓存、字幕获取与缓存、按需下载并合并视频音频（ffmpeg）。
+- 前端负责：文件夹浏览、视频列表展示、封面懒加载、播放器（Plyr）与字幕显示、PWA 支持。
 
-## ✨ 功能特点
+本项目已进行维护：
+- 清理冗余代码与无用导入；
+- 修复模型中的可变默认值与时间戳默认值；
+- 合并调用使用更安全的 `subprocess.run([...], shell=False)`；
+- 注释更清晰，函数职责更明确；
+- requirements 增补 pydantic。
 
-- 📁 **文件夹浏览**: 像文件管理器一样浏览视频文件夹
-- 🎬 **B站视频支持**: 解析B站链接，按需下载视频
-- 📱 **儿童友好界面**: 大按钮、清晰图标、简洁明了
-- ⬇️ **智能下载**: 只在播放时下载，节省存储空间
-- 🎯 **进度跟踪**: 实时显示下载进度
-- 📺 **本地播放**: 支持多种视频格式播放
-- 🌐 **Web应用**: 可在浏览器使用，也可打包成安卓APP
+## 目录结构
 
-## 🚀 快速开始
+- backend/
+  - main.py: FastAPI 应用与业务逻辑
+  - models.py: Pydantic 模型
+  - start_server.py: 启动脚本（开发时热重载）
+  - bilibili_downloader.py: 独立的异步下载器（如需单独使用）
+  - requirements.txt: 依赖列表
+- frontend/
+  - index.html, styles.css, app.js: 前端页面与逻辑
+  - manifest.json, sw.js: PWA 相关
+  - icon-192x192.png: 图标
+- videos/: 放置每个专辑（文件夹），每个文件夹包含一个 list.txt（内含 B 站链接或 BV 号）
+- covers/: 封面缓存（运行时生成）
+- subtitles/: 字幕缓存（运行时生成）
 
-### 1. 环境要求
+## 环境要求
 
-- Python 3.8+
-- FFmpeg (用于视频合并)
+- Python 3.9+
+- ffmpeg 可执行文件（需在 PATH 中）
+- Windows、macOS 或 Linux 均可
 
-### 2. 安装依赖
+## 安装
 
-```bash
-pip install -r backend/requirements.txt
-```
-
-### 3. 启动应用
-
-```bash
-python start_app.py
-```
-
-应用会自动在浏览器中打开: http://localhost:8000
-
-### 4. 添加视频
-
-在 `videos/文件夹名/list.txt` 中添加B站视频链接：
-
-```
-# 动画片视频列表
-https://www.bilibili.com/video/BV1xx411c7mu
-https://www.bilibili.com/video/BV1GJ411x7h7
-```
-
-## 📁 项目结构
+1) 创建虚拟环境并安装依赖（Windows PowerShell）：
 
 ```
-player/
-├── backend/                 # 后端API服务
-│   ├── main.py             # 主应用入口
-│   ├── bilibili_downloader.py  # B站下载器
-│   ├── models.py           # 数据模型
-│   ├── requirements.txt    # Python依赖
-│   └── start_server.py     # 启动脚本
-├── frontend/               # Web前端应用
-│   ├── index.html          # 主页面
-│   ├── styles.css          # 样式文件
-│   ├── app.js              # 应用逻辑
-│   ├── manifest.json       # PWA配置
-│   └── sw.js               # Service Worker
-├── videos/                 # 视频存储目录
-│   ├── 动画片/
-│   │   └── list.txt        # B站链接列表
-│   └── 教育视频/
-├── run.py                  # 一键启动脚本
-└── 1.py                    # 原始B站下载脚本
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r backend\requirements.txt
 ```
 
-## 🔧 技术架构
+2) 准备目录：首次运行会自动创建 `videos/`、`covers/`、`subtitles/` 目录。
 
-### 后端 (Python + FastAPI)
-- **FastAPI**: 现代化的异步API框架
-- **异步下载**: 支持并发下载和进度回调
-- **B站视频解析**: 基于原有1.py的逻辑重构
+## 可选配置（字幕）
 
-### 前端 (HTML/CSS/JavaScript)
-- **响应式设计**: 适配手机和电脑
-- **PWA支持**: 可添加到手机桌面
-- **儿童友好UI**: 大按钮、明亮色彩
+如需启用字幕获取能力（通过 B 站用户 Cookie 调用字幕接口），在 `backend` 目录下创建 `config.py`：
 
-## 📱 打包成安卓APP
-
-### 方法1: 使用Cordova
-
-```bash
-# 安装Cordova
-npm install -g cordova
-
-# 创建项目
-cordova create myapp com.example.kidsplayer "儿童视频播放器"
-
-# 复制前端文件到www目录
-cp -r frontend/* myapp/www/
-
-# 添加Android平台
-cd myapp
-cordova platform add android
-
-# 构建APK
-cordova build android
+```
+# backend/config.py
+BILIBILI_COOKIE = "你的B站Cookie"
 ```
 
-### 方法2: PWA方式
+注意：
+- Cookie 含敏感信息，请勿提交到版本库。
+- 未配置 Cookie 时，字幕功能不可用，但其他功能正常。
 
-1. 在手机浏览器打开应用
-2. 点击"添加到主屏幕"
-3. 即可像原生APP一样使用
+## 使用
 
-## 🎯 使用说明
+1) 在 `videos/` 下创建一个文件夹，例如 `PeppaPig/`，并在其中建立 `list.txt`，内容示例：
 
-### 添加视频内容
+```
+https://www.bilibili.com/video/BV1xxxxxxx
+# 也可以直接写 BV 号：
+BV1xxxxxxx
+```
 
-1. 在`videos`目录下创建文件夹（如"动画片"、"教育视频"）
-2. 在文件夹内创建`list.txt`文件
-3. 每行添加一个B站视频链接
-4. 支持以`#`开头的注释行
+只读取第一行作为该专辑的 BV 源（其余行可作为注释或备用）。
 
-### 观看视频
+2) 启动后端服务（开发模式，热重载）：
 
-1. 打开应用，选择文件夹
-2. 点击想看的视频
-3. 首次播放会自动下载
-4. 下载完成后自动播放
+```
+python backend\start_server.py
+```
 
-## 🛠️ 开发说明
+或直接运行（无热重载）：
 
-### API接口
+```
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
 
-- `GET /folders` - 获取文件夹列表
-- `GET /videos/{folder_path}` - 获取视频列表
-- `POST /download` - 开始下载视频
-- `GET /download/status/{task_id}` - 查询下载状态
-- `GET /stream/{folder_path}/{filename}` - 视频流
+3) 打开前端：
 
-### 自定义配置
+浏览器访问 http://localhost:8000/ 即可。
 
-- 修改`frontend/styles.css`自定义界面样式
-- 修改`backend/bilibili_downloader.py`添加新的视频源
-- 修改`frontend/manifest.json`配置PWA属性
+- 顶部“文件夹”页展示 `videos/` 下的专辑文件夹。
+- 点击进入某个专辑后，会分阶段加载分 P 基本信息与封面。
+- 播放时：若本地已存在合并后的视频文件，直接播放；否则临时下载音频/视频并用 ffmpeg 合并，然后播放。
 
-## ❓ 故障排除
+## 常见问题
 
-### 常见问题
+- 403/429 或访问受限：已内置简易 QPS 与冷却策略，仍可能受 B 站策略影响，可降低并发或放慢请求速率（环境变量 OUTBOUND_MAX_QPS、OUTBOUND_MAX_CONCURRENCY）。
+- 字幕无法获取：需要配置有效的 B 站 Cookie；且仅当视频存在用户字幕时可用。
+- ffmpeg 未找到：请安装 ffmpeg 并确保其所在目录在系统 PATH 中。
 
-1. **FFmpeg未找到**
-   - 下载安装FFmpeg: https://ffmpeg.org/download.html
-   - 确保ffmpeg在系统PATH中
+## 接口速览
 
-2. **视频下载失败**
-   - 检查B站链接是否有效
-   - 确认网络连接稳定
+- GET /api/folders: 获取顶级文件夹
+- GET /api/folders?path=子路径: 获取指定路径下的直接子文件夹
+- GET /api/folders/{folder_path}: 获取分 P 基本信息
+- GET /api/folders/{folder_path}/details: 获取包含封面与字幕可用性的详细信息
+- GET /api/cover/{bvid}/{page}: 获取并缓存某分 P 的封面
+- POST /api/covers/preload: 批量预加载封面
+- GET /api/play/{folder_path}/{page}: 按需下载并播放（返回本地播放 URL）
+- GET /api/subtitle/{folder_path}/{page}: 下载并返回字幕 URL
+- 静态文件：/static/...、/covers/...、/subtitles/...
 
-3. **无法访问应用**
-   - 检查防火墙设置
-   - 确认后端服务正在运行
+## 开发说明
 
-## 📄 许可证
+- 代码风格：已避免 Pydantic 可变默认值陷阱，时间戳使用 Field(default_factory=...)。
+- 合并命令：使用 `subprocess.run([...], shell=False)`，更安全。
+- 异步与限流：对外呼做了并发/速率与冷却控制，尽量减少被限流风险。
 
-MIT License
+## 许可证
 
-## 🤝 贡献
-
-欢迎提交Issue和Pull Request！
+仅用于学习与个人使用。请遵循 B 站及相关内容版权与使用条款。

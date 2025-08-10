@@ -3,8 +3,6 @@
 启动服务器脚本
 """
 import uvicorn
-import os
-import sys
 from pathlib import Path
 
 def main():

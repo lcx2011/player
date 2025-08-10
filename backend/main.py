@@ -8,7 +8,7 @@ import locale
 from functools import reduce
 from hashlib import md5
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -527,34 +527,6 @@ async def download_and_cache_cover_async(bvid: str, page: int, cover_url: str) -
 
     return ""
 
-async def download_and_cache_cover(bvid: str, page: int, cover_url: str) -> str:
-    """下载并缓存封面图片，返回本地路径"""
-    if not cover_url:
-        return ""
-
-    # 确保URL协议完整
-    if cover_url.startswith('//'):
-        cover_url = 'http:' + cover_url
-
-    # 生成缓存文件名
-    cover_filename = f"{bvid}_p{page}.jpg"
-    cover_path = COVERS_DIR / cover_filename
-
-    # 如果已经缓存，直接返回
-    if cover_path.exists():
-        return f"/covers/{cover_filename}"
-
-    try:
-        # 下载封面
-        response = get_bilibili_response(cover_url)
-        if response:
-            with open(cover_path, 'wb') as f:
-                f.write(response.content)
-            return f"/covers/{cover_filename}"
-    except Exception as e:
-        print(f"下载封面失败: {e}")
-
-    return ""
 
 async def check_subtitle_availability_async(bvid: str, page: int, cid: int) -> bool:
     """异步检查视频是否有字幕可用"""
@@ -795,9 +767,15 @@ def download_and_merge(bvid: str, p_info: dict, target_dir: Path):
         f.write(video_res.content)
 
     # 4. Merge with ffmpeg
-    command = f'ffmpeg -i "{temp_video_path}" -i "{temp_audio_path}" -c copy "{final_video_path}"'
+    command = [
+        'ffmpeg',
+        '-i', str(temp_video_path),
+        '-i', str(temp_audio_path),
+        '-c', 'copy',
+        str(final_video_path)
+    ]
     try:
-        subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+        subprocess.run(command, shell=False, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
         # If merge fails, clean up temp files and raise error
         temp_audio_path.unlink(missing_ok=True)

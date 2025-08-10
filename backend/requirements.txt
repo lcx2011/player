@@ -4,3 +4,4 @@ requests
 aiohttp
 aiofiles
 python-multipart
+pydantic

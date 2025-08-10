@@ -604,6 +604,26 @@ body {
     background: var(--gray-900);
 }
 
+/* 全屏时去除周边留白，填充整个屏幕，避免底部黑条 */
+.plyr--fullscreen-enabled.plyr--fullscreen-active,
+.plyr--video.plyr--fullscreen-active {
+    border-radius: 0 !important;
+}
+
+.plyr--fullscreen-active .plyr__video-wrapper,
+.plyr--fullscreen-active video,
+.plyr--fullscreen-active .plyr__poster {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+}
+
+/* iOS/Android 浏览器的安全区适配，确保真正铺满 */
+.plyr--fullscreen-active {
+    inset: 0;
+}
+
 .video-controls {
     position: absolute;
     top: var(--space-md);
@@ -937,6 +957,11 @@ button:focus,
 .plyr--video {
     border-radius: var(--radius-lg);
     overflow: hidden;
+}
+
+/* 修复某些设备上全屏底部出现黑边的问题（控制条高度计算）*/
+.plyr--fullscreen-active .plyr__controls {
+    padding-bottom: 0; /* 让控制条覆盖在视频上，避免撑开高度 */
 }
 
 .plyr__controls {

@@ -45,9 +45,9 @@ class VideoPlayerApp {
     }
 
     showScreen(screenName) {
-        // 如果正在离开播放器屏幕，停止视频播放
+        // 如果正在离开播放器屏幕，彻底停止并清理视频播放
         if (this.currentScreen === 'player' && screenName !== 'player') {
-            this.stopVideo();
+            this.clearVideoPlayer();
         }
         
         // 隐藏所有屏幕
@@ -138,47 +138,13 @@ class VideoPlayerApp {
     }
 
     updateBreadcrumb() {
+        // 需求：移除列表上方的第二处重复信息（面包屑）。
+        // 做法：始终将面包屑隐藏，不再渲染路径项。
         const breadcrumb = document.getElementById('breadcrumb');
-        const breadcrumbItems = breadcrumb.querySelector('.breadcrumb-items');
-        
-        if (this.currentPath.length === 0) {
+        if (breadcrumb) {
             breadcrumb.classList.add('hidden');
-            return;
         }
-        
-        breadcrumb.classList.remove('hidden');
-        breadcrumbItems.innerHTML = '';
-        
-        // 添加根目录
-        const homeItem = document.createElement('span');
-        homeItem.className = 'breadcrumb-item';
-        homeItem.textContent = '🏠 首页';
-        homeItem.addEventListener('click', () => this.loadFolders(''));
-        breadcrumbItems.appendChild(homeItem);
-        
-        // 添加路径项
-        this.currentPath.forEach((pathPart, index) => {
-            // 添加分隔符
-            const separator = document.createElement('span');
-            separator.className = 'breadcrumb-separator';
-            separator.textContent = '>';
-            breadcrumbItems.appendChild(separator);
-            
-            // 添加路径项
-            const pathItem = document.createElement('span');
-            pathItem.className = 'breadcrumb-item';
-            if (index === this.currentPath.length - 1) {
-                pathItem.classList.add('current');
-            }
-            pathItem.textContent = pathPart;
-            
-            if (index < this.currentPath.length - 1) {
-                const targetPath = this.currentPath.slice(0, index + 1).join('/');
-                pathItem.addEventListener('click', () => this.loadFolders(targetPath));
-            }
-            
-            breadcrumbItems.appendChild(pathItem);
-        });
+        return;
     }
     
     updateBackButton() {
@@ -390,10 +356,24 @@ class VideoPlayerApp {
     }
 
     stopVideo() {
-        // 使用Plyr API停止播放
+        // 优先通过Plyr停止
         if (this.player) {
-            this.player.pause();
-            this.player.currentTime = 0;
+            try { this.player.pause(); } catch(_) {}
+            try { this.player.currentTime = 0; } catch(_) {}
+        }
+        // 同时直接操作原生video，确保彻底停止
+        const videoPlayer = document.getElementById('video-player');
+        const videoSource = document.getElementById('video-source');
+        const subtitleTrack = document.getElementById('subtitle-track');
+        if (videoPlayer) {
+            try { videoPlayer.pause(); } catch(_) {}
+            if (videoSource) videoSource.src = '';
+            if (subtitleTrack) {
+                subtitleTrack.src = '';
+                subtitleTrack.style.display = 'none';
+            }
+            try { videoPlayer.removeAttribute('src'); } catch(_) {}
+            try { videoPlayer.load(); } catch(_) {}
         }
     }
 
@@ -403,7 +383,19 @@ class VideoPlayerApp {
 
         // 设置新的视频源
         videoSource.src = `${this.apiBase}${videoUrl}`;
+        // 确保允许自动播放
+        videoPlayer.autoplay = true;
         videoPlayer.load();
+
+        // 如果浏览器允许，尽早开始播放（与用户点击更贴近）
+        try {
+            const playPromise = videoPlayer.play();
+            if (playPromise && typeof playPromise.then === 'function') {
+                playPromise.catch(() => {
+                    // 忽略，稍后由Plyr接管再尝试播放
+                });
+            }
+        } catch (_) {}
 
         // 初始化Plyr播放器
         this.initPlyrPlayer();
@@ -515,6 +507,7 @@ class VideoPlayerApp {
                 update: true
             },
             // 其他配置
+            autoplay: true, // 优先尝试自动播放
             clickToPlay: true,
             hideControls: true,
             resetOnEnd: false,
@@ -564,6 +557,10 @@ class VideoPlayerApp {
         // 检测视频是否可以播放
         this.player.on('canplay', () => {
             console.log('视频可以播放');
+            // 再次确保处于播放中
+            if (this.player && this.player.paused) {
+                this.player.play().catch(() => {});
+            }
         });
 
         // 字幕事件监听

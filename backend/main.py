@@ -840,44 +840,41 @@ async def list_folders(path: str = ""):
     if not VIDEOS_DIR.is_dir():
         return JSONResponse(content=[], headers={"Content-Type": "application/json; charset=utf-8"})
     
-    # 如果指定了路径，则从该路径开始扫描
-    if path:
+    # 确定要扫描的目录
+    if path and path.strip():
         target_path = VIDEOS_DIR / path
         if not target_path.exists() or not target_path.is_dir():
             raise HTTPException(status_code=404, detail=f"Folder not found: {path}")
-        
-        # 只返回指定路径下的直接子文件夹
-        folders = []
-        try:
-            for item in target_path.iterdir():
-                if item.is_dir():
-                    relative_path = str(item.relative_to(VIDEOS_DIR))
-                    list_file = item / "list.txt"
-                    has_list_file = list_file.exists()
-                    
-                    folder_info = {
-                        "name": item.name,
-                        "path": relative_path,
-                        "parent_path": path,
-                        "children": [],
-                        "has_list_file": has_list_file,
-                        "video_count": 0,
-                        "downloaded_count": 0,
-                        "depth": len(path.split('/')) if path else 0,
-                        "is_folder": True
-                    }
-                    folders.append(folder_info)
-        except PermissionError:
-            pass
-        
-        # 对文件夹进行中文友好排序
-        sorted_folders = sort_folders_chinese(folders)
-        return JSONResponse(content=sorted_folders, headers={"Content-Type": "application/json; charset=utf-8"})
     else:
-        # 返回顶级文件夹
-        folders = scan_folders_recursive(VIDEOS_DIR, depth=0, max_depth=0)
-        sorted_folders = sort_folders_chinese(folders)
-        return JSONResponse(content=sorted_folders, headers={"Content-Type": "application/json; charset=utf-8"})
+        target_path = VIDEOS_DIR
+    
+    # 直接扫描指定目录下的直接子文件夹
+    folders = []
+    try:
+        for item in target_path.iterdir():
+            if item.is_dir():
+                relative_path = str(item.relative_to(VIDEOS_DIR)).replace('\\', '/')  # 确保使用正斜杠
+                list_file = item / "list.txt"
+                has_list_file = list_file.exists()
+                
+                folder_info = {
+                    "name": item.name,
+                    "path": relative_path,
+                    "parent_path": path if path and path.strip() else None,
+                    "children": [],
+                    "has_list_file": has_list_file,
+                    "video_count": 0,
+                    "downloaded_count": 0,
+                    "depth": len(path.split('/')) if path and path.strip() else 0,
+                    "is_folder": True
+                }
+                folders.append(folder_info)
+    except PermissionError:
+        pass
+    
+    # 对文件夹进行中文友好排序
+    sorted_folders = sort_folders_chinese(folders)
+    return JSONResponse(content=sorted_folders, headers={"Content-Type": "application/json; charset=utf-8"})
 
 @app.get("/api/folders/{folder_path:path}")
 async def list_videos_in_folder(folder_path: str):

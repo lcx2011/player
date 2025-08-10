@@ -67,12 +67,15 @@ class VideoPlayerApp {
 
     async loadFolders(path = '') {
         try {
-            const url = path ? `${this.apiBase}/api/folders?path=${encodeURIComponent(path)}` : `${this.apiBase}/api/folders`;
+            // 标准化路径：将反斜杠转换为正斜杠
+            const normalizedPath = path ? path.replace(/\\/g, '/') : '';
+            
+            const url = normalizedPath && normalizedPath.trim() ? `${this.apiBase}/api/folders?path=${encodeURIComponent(normalizedPath)}` : `${this.apiBase}/api/folders`;
             const response = await fetch(url);
             const folders = await response.json();
             
             // 更新当前路径
-            this.currentPath = path ? path.split('/') : [];
+            this.currentPath = (normalizedPath && normalizedPath.trim()) ? normalizedPath.split('/') : [];
             
             this.renderFolders(folders);
             this.updateBreadcrumb();
@@ -166,7 +169,11 @@ class VideoPlayerApp {
     
     navigateToParent() {
         if (this.currentPath.length > 0) {
-            const parentPath = this.currentPath.slice(0, -1).join('/');
+            // 计算父级路径
+            const parentPathArray = this.currentPath.slice(0, -1);
+            const parentPath = parentPathArray.length > 0 ? parentPathArray.join('/') : '';
+            
+            // 加载父级文件夹
             this.loadFolders(parentPath);
         }
     }

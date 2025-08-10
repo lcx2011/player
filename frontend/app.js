@@ -9,6 +9,9 @@ class VideoPlayerApp {
         this.currentPath = [];  // 当前路径栈 ['folder1', 'subfolder1']
         this.folderHistory = []; // 导航历史
         this.player = null; // Plyr播放器实例
+        // 加载页状态：打字是否完成、数据是否就绪
+        this.typingDone = false;
+        this.foldersLoaded = false;
         
         this.init();
     }
@@ -20,10 +23,9 @@ class VideoPlayerApp {
         // 注册 Service Worker
         this.registerServiceWorker();
         
-        // 模拟加载时间
-        setTimeout(() => {
-            this.loadFolders();
-        }, 1500);
+        // 开始打字动画并并行加载数据
+        this.startTypingAnimation();
+        this.loadFolders();
     }
 
     bindEvents() {
@@ -75,7 +77,9 @@ class VideoPlayerApp {
             this.renderFolders(folders);
             this.updateBreadcrumb();
             this.updateBackButton();
-            this.showScreen('folders');
+            // 数据就绪标记
+            this.foldersLoaded = true;
+            this.maybeEnterApp();
         } catch (error) {
             this.showError('加载文件夹失败');
             console.error('Error loading folders:', error);
@@ -279,6 +283,47 @@ class VideoPlayerApp {
                     <div class="placeholder-icon" style="display: none;">🎬</div>
                 `;
             }
+        }
+    }
+
+    // 打字动画：逐字显示“welcome to player”，结束后标记完成
+    startTypingAnimation() {
+        const text = 'welcome to player';
+        const el = document.getElementById('typing-text');
+        const cursor = document.querySelector('.typing-cursor');
+        if (!el) {
+            // 若元素不存在，直接标记完成，避免阻塞
+            this.typingDone = true;
+            this.maybeEnterApp();
+            return;
+        }
+        el.textContent = '';
+        let i = 0;
+        const charSpeed = 100; // 每个字符的基础间隔(ms)——更慢
+        const wordPause = 400; // 单词间的额外停顿(ms)
+        const typeNext = () => {
+            if (i < text.length) {
+                const ch = text[i];
+                el.textContent += ch;
+                i += 1;
+                // 如果是空格，额外停顿一下（单词间）
+                const delay = ch === ' ' ? wordPause : charSpeed;
+                setTimeout(typeNext, delay);
+            } else {
+                // 打字完成，光标继续闪烁；整体额外停顿700ms再进入
+                setTimeout(() => {
+                    this.typingDone = true;
+                    this.maybeEnterApp();
+                }, 700);
+            }
+        };
+        typeNext();
+    }
+
+    // 若数据准备完成且打字完成，则进入应用首页
+    maybeEnterApp() {
+        if (this.typingDone && this.foldersLoaded) {
+            this.showScreen('folders');
         }
     }
 

@@ -1232,6 +1232,108 @@ async def get_subtitle(folder_path: str, page_number: int):
 
     return {"subtitle_url": subtitle_path}
 
+@app.get("/api/recommendations")
+async def get_recommendations():
+    """
+    获取推荐内容
+    目前返回占位符数据，将来可以实现智能推荐算法
+    """
+    try:
+        # 这里可以实现推荐算法，目前返回占位符数据
+        recommendations = {
+            "status": "success",
+            "data": {
+                "featured": {
+                    "title": "今日推荐",
+                    "items": [
+                        {
+                            "id": "rec_001",
+                            "title": "精选儿童动画",
+                            "description": "适合3-8岁儿童观看的优质动画内容",
+                            "thumbnail": "/static/placeholders/animation.jpg",
+                            "category": "动画",
+                            "age_group": "3-8岁"
+                        },
+                        {
+                            "id": "rec_002",
+                            "title": "科学启蒙视频",
+                            "description": "有趣的科学知识启蒙内容",
+                            "thumbnail": "/static/placeholders/science.jpg",
+                            "category": "教育",
+                            "age_group": "6-12岁"
+                        },
+                        {
+                            "id": "rec_003",
+                            "title": "经典儿歌合集",
+                            "description": "传统与现代儿歌的完美结合",
+                            "thumbnail": "/static/placeholders/music.jpg",
+                            "category": "音乐",
+                            "age_group": "2-10岁"
+                        }
+                    ]
+                },
+                "categories": [
+                    {
+                        "id": "animation",
+                        "name": "动画片",
+                        "icon": "🎬",
+                        "count": 25
+                    },
+                    {
+                        "id": "education",
+                        "name": "教育内容",
+                        "icon": "📚",
+                        "count": 18
+                    },
+                    {
+                        "id": "music",
+                        "name": "音乐歌曲",
+                        "icon": "🎵",
+                        "count": 32
+                    },
+                    {
+                        "id": "stories",
+                        "name": "故事朗读",
+                        "icon": "📖",
+                        "count": 15
+                    }
+                ],
+                "recent_popular": {
+                    "title": "最近热门",
+                    "items": [
+                        {
+                            "title": "小猪佩奇系列",
+                            "views": "1.2万次观看",
+                            "rating": 4.8
+                        },
+                        {
+                            "title": "超级飞侠",
+                            "views": "8500次观看",
+                            "rating": 4.6
+                        },
+                        {
+                            "title": "汪汪队立大功",
+                            "views": "9200次观看",
+                            "rating": 4.7
+                        }
+                    ]
+                }
+            },
+            "message": "推荐内容加载成功"
+        }
+        
+        return JSONResponse(
+            content=recommendations,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+    
+    except Exception as e:
+        print(f"加载推荐内容失败: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="推荐内容暂时无法加载，请稍后再试"
+        )
+
 # --- Frontend Routes ---
 @app.get("/", response_class=HTMLResponse)
 async def serve_frontend():

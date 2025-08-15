@@ -25,11 +25,27 @@ class VideoPlayerApp {
         
         // 开始打字动画并并行加载数据
         this.startTypingAnimation();
-        this.loadFolders();
+        this.loadFolders('', true); // 初始加载时标记为true
     }
 
     bindEvents() {
+        // 主页选择按钮
+        document.getElementById('go-to-folders').addEventListener('click', () => {
+            // 重置路径状态并加载根目录
+            this.currentPath = [];
+            this.loadFolders('');
+            this.showScreen('folders');
+        });
+        
         // 返回按钮
+        document.getElementById('back-to-home').addEventListener('click', () => {
+            this.showScreen('home');
+        });
+        
+        document.getElementById('back-to-home-from-folders').addEventListener('click', () => {
+            this.showScreen('home');
+        });
+        
         document.getElementById('back-to-folders').addEventListener('click', () => {
             this.showScreen('folders');
         });
@@ -65,7 +81,7 @@ class VideoPlayerApp {
         }
     }
 
-    async loadFolders(path = '') {
+    async loadFolders(path = '', isInitialLoad = false) {
         try {
             // 标准化路径：将反斜杠转换为正斜杠
             const normalizedPath = path ? path.replace(/\\/g, '/') : '';
@@ -80,9 +96,12 @@ class VideoPlayerApp {
             this.renderFolders(folders);
             this.updateBreadcrumb();
             this.updateBackButton();
-            // 数据就绪标记
-            this.foldersLoaded = true;
-            this.maybeEnterApp();
+            
+            // 只有在初始加载时才设置标记和检查是否进入主页
+            if (isInitialLoad) {
+                this.foldersLoaded = true;
+                this.maybeEnterApp();
+            }
         } catch (error) {
             this.showError('加载文件夹失败');
             console.error('Error loading folders:', error);
@@ -155,14 +174,19 @@ class VideoPlayerApp {
     }
     
     updateBackButton() {
-        const backButton = document.getElementById('back-to-parent');
+        const backToParentButton = document.getElementById('back-to-parent');
+        const backToHomeButton = document.getElementById('back-to-home-from-folders');
         const foldersTitle = document.getElementById('folders-title');
         
         if (this.currentPath.length > 0) {
-            backButton.classList.remove('hidden');
+            // 在子文件夹中，显示返回上级文件夹按钮，隐藏返回主页按钮
+            backToParentButton.classList.remove('hidden');
+            backToHomeButton.classList.add('hidden');
             foldersTitle.textContent = `📁 ${this.currentPath[this.currentPath.length - 1]}`;
         } else {
-            backButton.classList.add('hidden');
+            // 在根目录，显示返回主页按钮，隐藏返回上级文件夹按钮
+            backToParentButton.classList.add('hidden');
+            backToHomeButton.classList.remove('hidden');
             foldersTitle.textContent = '📁 选择文件夹';
         }
     }
@@ -176,6 +200,77 @@ class VideoPlayerApp {
             // 加载父级文件夹
             this.loadFolders(parentPath);
         }
+    }
+
+    async showRecommendations() {
+        try {
+            this.showScreen('recommendations');
+            // 加载推荐内容
+            await this.loadRecommendations();
+        } catch (error) {
+            this.showError('加载推荐内容失败');
+            console.error('Error loading recommendations:', error);
+        }
+    }
+
+    async loadRecommendations() {
+        const container = document.getElementById('recommendations-content');
+        
+        // 显示加载状态
+        container.innerHTML = `
+            <div class="loading-state">
+                <div class="loading-spinner">🔄</div>
+                <p>正在加载推荐内容...</p>
+            </div>
+        `;
+        
+        try {
+            const response = await fetch(`${this.apiBase}/api/recommendations`);
+            if (response.ok) {
+                const recommendations = await response.json();
+                this.renderRecommendations(recommendations);
+            } else {
+                throw new Error('Failed to load recommendations');
+            }
+        } catch (error) {
+            // 显示占位符内容
+            container.innerHTML = `
+                <div class="recommendations-placeholder">
+                    <div class="placeholder-icon">🎯</div>
+                    <h3>推荐功能即将上线</h3>
+                    <p>我们正在为您准备精彩的推荐内容</p>
+                    <div class="placeholder-items">
+                        <div class="placeholder-item">
+                            <div class="placeholder-thumbnail">🎬</div>
+                            <div class="placeholder-info">
+                                <div class="placeholder-title">热门视频推荐</div>
+                                <div class="placeholder-desc">即将为您推荐最受欢迎的内容</div>
+                            </div>
+                        </div>
+                        <div class="placeholder-item">
+                            <div class="placeholder-thumbnail">📚</div>
+                            <div class="placeholder-info">
+                                <div class="placeholder-title">学习内容推荐</div>
+                                <div class="placeholder-desc">根据年龄推荐适合的学习视频</div>
+                            </div>
+                        </div>
+                        <div class="placeholder-item">
+                            <div class="placeholder-thumbnail">🎵</div>
+                            <div class="placeholder-info">
+                                <div class="placeholder-title">音乐动画推荐</div>
+                                <div class="placeholder-desc">精选儿童音乐和动画内容</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    renderRecommendations(recommendations) {
+        const container = document.getElementById('recommendations-content');
+        // TODO: 实现推荐内容的渲染逻辑
+        console.log('Recommendations:', recommendations);
     }
 
     async loadVideos(folderPath) {
@@ -328,10 +423,10 @@ class VideoPlayerApp {
         typeNext();
     }
 
-    // 若数据准备完成且打字完成，则进入应用首页
+    // 若数据准备完成且打字完成，则进入主页选择界面
     maybeEnterApp() {
         if (this.typingDone && this.foldersLoaded) {
-            this.showScreen('folders');
+            this.showScreen('home');
         }
     }
 

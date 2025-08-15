@@ -44,9 +44,64 @@
         </div>
     </div>
 
+    <!-- 主页选择界面 -->
+    <div id="home-screen" class="screen hidden">
+        <header class="app-header">
+            <h1>🎬 儿童视频播放器</h1>
+        </header>
+        <main class="content">
+            <div class="home-grid">
+                <div class="home-item" id="go-to-folders">
+                    <span class="home-icon">📁</span>
+                    <div class="home-name">进入文件夹列表</div>
+                </div>
+                <!-- 预留推荐位置 -->
+                <div class="home-item placeholder-item">
+                    <span class="home-icon">🎬</span>
+                    <div class="home-name">推荐视频1</div>
+                    <div class="coming-soon">即将推出</div>
+                </div>
+                <div class="home-item placeholder-item">
+                    <span class="home-icon">📚</span>
+                    <div class="home-name">推荐视频2</div>
+                    <div class="coming-soon">即将推出</div>
+                </div>
+                <div class="home-item placeholder-item">
+                    <span class="home-icon">🎵</span>
+                    <div class="home-name">推荐视频3</div>
+                    <div class="coming-soon">即将推出</div>
+                </div>
+                <div class="home-item placeholder-item">
+                    <span class="home-icon">🌟</span>
+                    <div class="home-name">推荐视频4</div>
+                    <div class="coming-soon">即将推出</div>
+                </div>
+                <div class="home-item placeholder-item">
+                    <span class="home-icon">🎨</span>
+                    <div class="home-name">推荐视频5</div>
+                    <div class="coming-soon">即将推出</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 推荐页面 -->
+    <div id="recommendations-screen" class="screen hidden">
+        <header class="app-header">
+            <button id="back-to-home" class="back-btn">← 返回</button>
+            <h1 id="recommendations-title">🎯 推荐内容</h1>
+        </header>
+        <main class="content">
+            <div id="recommendations-content">
+                <!-- 推荐内容将动态加载 -->
+            </div>
+        </main>
+    </div>
+
     <!-- 文件夹列表页面 -->
     <div id="folders-screen" class="screen hidden">
         <header class="app-header">
+            <button id="back-to-home-from-folders" class="back-btn">← 返回</button>
             <button id="back-to-parent" class="back-btn hidden">← 返回</button>
             <h1 id="folders-title">📁 选择文件夹</h1>
         </header>

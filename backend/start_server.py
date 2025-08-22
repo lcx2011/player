@@ -6,31 +6,27 @@ import uvicorn
 from pathlib import Path
 
 def main():
-    # 确保videos目录存在
-    videos_dir = Path("videos")
-    if not videos_dir.exists():
-        videos_dir.mkdir()
-        print(f"创建videos目录: {videos_dir.absolute()}")
-    
-    # 启动服务器
-    print("🚀 启动儿童视频播放器后端服务...")
-    print(f"📁 视频目录: {videos_dir.absolute()}")
-    print("🌐 服务地址: http://localhost:8000")
-    print("📖 API文档: http://localhost:8000/docs")
-    print("🔄 按 Ctrl+C 停止服务")
+    print("🚀 Starting development server for Video Player Backend...")
+    print("🔄 Auto-reload is enabled for the 'backend/app' directory.")
+    print("🌐 Service will be available at: http://localhost:8000")
+    print("📖 API documentation at: http://localhost:8000/docs")
     print("-" * 50)
     
     try:
+        # Run from the project root directory
         uvicorn.run(
-            "main:app",
+            "backend.app.main:app",  # Full import path to the app object
             host="0.0.0.0",
             port=8000,
             reload=True,
-            reload_dirs=["backend"],
+            reload_dirs=["backend/app"],  # Watch the new app directory for changes
             log_level="info"
         )
     except KeyboardInterrupt:
-        print("\n👋 服务已停止")
+        print("\n👋 Server has been stopped.")
+    except ImportError as e:
+        print(f"\n❌ Error: Could not import the application: {e}")
+        print("   Please ensure you are running this script from the project's root directory.")
 
 if __name__ == "__main__":
     main()

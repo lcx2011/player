@@ -192,3 +192,35 @@ async def serve_subtitle_file(file_name: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Subtitle file not found")
     return FileResponse(file_path, media_type="text/vtt")
+
+@router.get("/api/cover/{bvid}/{page_number}", response_class=JSONResponse)
+async def get_single_cover(bvid: str, page_number: int):
+    """
+    Asynchronously gets a single video cover. This endpoint is called by the frontend
+    to lazy-load cover images.
+    """
+    try:
+        # Check if the cover is already cached
+        cover_filename = f"{bvid}_p{page_number}.jpg"
+        cover_path = COVERS_DIR / cover_filename
+        if cover_path.exists():
+            return {"cover_url": f"/covers/{cover_filename}", "cached": True}
+
+        # If not cached, fetch video part details to find the cover URL
+        video_parts = await bilibili.get_video_parts_with_covers_async(bvid)
+        if not video_parts:
+            return {"cover_url": "", "cached": False}
+
+        target_part = next((p for p in video_parts if p['page'] == page_number), None)
+        if not target_part or not target_part.get('first_frame'):
+            return {"cover_url": "", "cached": False}
+
+        # Download and cache the cover
+        cover_url = await bilibili.download_and_cache_cover_async(
+            bvid, page_number, target_part['first_frame']
+        )
+        return {"cover_url": cover_url, "cached": False}
+
+    except Exception as e:
+        print(f"Error getting single cover: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve cover")
